@@ -1,0 +1,105 @@
+name: Static data and GitHub Pages
+
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+    inputs:
+      scope:
+        description: "Data export scope"
+        required: true
+        default: "all"
+        type: choice
+        options:
+          - all
+          - hts
+          - section232
+          - adcvd
+          - cotton
+          - translations
+  schedule:
+    # HTS / normal duty / Chapter 99: every 1 hour.
+    - cron: "7 * * * *"
+    # 232 Metals HTS List: every 6 hours.
+    - cron: "17 */6 * * *"
+    # AD/CVD official monitor and static match snapshot: every 24 hours.
+    - cron: "27 2 * * *"
+    # Cotton Import Assessment: every 24 hours.
+    - cron: "37 3 * * *"
+    # Translation helper cache: weekly.
+    - cron: "47 4 * * 1"
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages-static-data"
+  cancel-in-progress: false
+
+jobs:
+  export-and-deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Resolve export scope
+        id: scope
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            scope="${{ inputs.scope }}"
+          elif [ "${{ github.event_name }}" = "schedule" ]; then
+            case "${{ github.event.schedule }}" in
+              "7 * * * *") scope="hts" ;;
+              "17 */6 * * *") scope="section232" ;;
+              "27 2 * * *") scope="adcvd" ;;
+              "37 3 * * *") scope="cotton" ;;
+              "47 4 * * 1") scope="translations" ;;
+              *) scope="all" ;;
+            esac
+          else
+            scope="all"
+          fi
+          echo "scope=$scope" >> "$GITHUB_OUTPUT"
+          echo "Export scope: $scope"
+
+      - name: Export static data
+        run: node scripts/export-static-data.js --scope "${{ steps.scope.outputs.scope }}"
+
+      - name: Commit refreshed data
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add public/data
+          if git diff --cached --quiet; then
+            echo "No static data changes to commit."
+          else
+            git commit -m "chore: update static data (${{ steps.scope.outputs.scope }}) [skip ci]"
+            git push
+          fi
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: public
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

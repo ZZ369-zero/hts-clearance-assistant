@@ -1,0 +1,422 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>美国 HTS 清关税金助手</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">US HTS CLEARANCE</p>
+          <h1>美国 HTS 清关税金助手</h1>
+        </div>
+        <div class="status-strip" aria-live="polite">
+          <span id="releaseBadge" class="badge">连接官方数据</span>
+          <span id="syncTime">--</span>
+          <button id="refreshData" class="icon-button" type="button" title="刷新官方数据" aria-label="刷新官方数据">
+            <span aria-hidden="true">↻</span>
+          </button>
+        </div>
+      </header>
+
+      <main>
+        <section class="mode-shell tool-panel" aria-label="清关方案">
+          <div class="mode-controls">
+            <div>
+              <p class="eyebrow">TRANSPORT</p>
+              <div class="mode-switch" role="tablist" aria-label="运输方式">
+                <button id="oceanTab" class="mode-button active" type="button" role="tab" aria-selected="true">
+                  海运
+                </button>
+                <button id="airTab" class="mode-button" type="button" role="tab" aria-selected="false">
+                  空运
+                </button>
+              </div>
+            </div>
+            <div>
+              <p class="eyebrow">ENTRY TYPE</p>
+              <div class="mode-switch" role="tablist" aria-label="清关模式">
+                <button id="t01Mode" class="mode-button active" type="button" role="tab" aria-selected="true">
+                  T01
+                </button>
+                <button id="t11Mode" class="mode-button" type="button" role="tab" aria-selected="false">
+                  T11
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div class="mode-summary">
+            <div>
+              <span>运输方式</span>
+              <strong id="transportTitle">海运 Ocean</strong>
+              <p id="transportHint">整柜、拼箱和大货运输；通常关注 ISF、AMS、提单、到港和 HMF。</p>
+            </div>
+            <div>
+              <span>清关模式</span>
+              <strong id="clearanceTitle">T01 Formal Entry</strong>
+              <p id="clearanceHint">适用于正式进口申报、商业大货、高货值或需监管证件的货物。</p>
+            </div>
+          </div>
+
+          <div class="mode-fields">
+            <div id="oceanFields" class="mode-card">
+              <h3>海运字段</h3>
+              <div class="mode-input-grid">
+                <label>
+                  美国到港口岸
+                  <input id="oceanPort" type="text" placeholder="Los Angeles / Long Beach" />
+                </label>
+                <label>
+                  提单号 / MBL-HBL
+                  <input id="billOfLading" type="text" placeholder="MBL / HBL" />
+                </label>
+                <label>
+                  柜量 / 件数
+                  <input id="containerCount" type="text" placeholder="1 x 40HQ / 12 pallets" />
+                </label>
+                <label>
+                  ISF 状态
+                  <select id="isfStatus">
+                    <option value="pending">待确认</option>
+                    <option value="filed">已申报</option>
+                    <option value="not-needed">无需 ISF</option>
+                  </select>
+                </label>
+              </div>
+            </div>
+
+            <div id="airFields" class="mode-card hidden">
+              <h3>空运字段</h3>
+              <div class="mode-input-grid">
+                <label>
+                  美国到达机场
+                  <input id="arrivalAirport" type="text" placeholder="LAX / JFK / ORD" />
+                </label>
+                <label>
+                  运单号 / MAWB-HAWB
+                  <input id="airWaybill" type="text" placeholder="MAWB / HAWB" />
+                </label>
+                <label>
+                  航班 / ETA
+                  <input id="flightInfo" type="text" placeholder="Flight / ETA" />
+                </label>
+                <label>
+                  包裹 / 票数
+                  <input id="packageCount" type="text" placeholder="Parcels / shipments" />
+                </label>
+              </div>
+            </div>
+
+            <div class="mode-card">
+              <h3>申报参数</h3>
+              <div class="mode-input-grid">
+                <label>
+                  清关服务费 USD
+                  <input id="clearanceFee" type="number" min="0" step="0.01" value="0" />
+                </label>
+                <label>
+                  进口商 / IOR
+                  <input id="iorName" type="text" placeholder="Importer of Record" />
+                </label>
+              </div>
+              <p id="modeValueNotice" class="mode-notice">T01 当前按正式申报估算。</p>
+            </div>
+          </div>
+
+          <ul id="modeChecklist" class="mode-checklist"></ul>
+        </section>
+
+        <section class="sync-center tool-panel" aria-label="数据同步中心">
+          <div class="sync-heading">
+            <div>
+              <p class="eyebrow">DATA SYNC</p>
+              <h2>数据同步中心</h2>
+            </div>
+            <div class="sync-actions">
+              <span id="syncAutoStatus">自动更新：读取中</span>
+              <button id="syncRefreshAll" class="secondary-button" type="button">全部刷新</button>
+            </div>
+          </div>
+          <div id="syncSourceList" class="sync-source-list">
+            <div class="sync-empty">正在读取数据源状态...</div>
+          </div>
+        </section>
+
+        <section class="workspace">
+          <div class="tool-panel search-panel">
+            <div class="tabs" role="tablist" aria-label="查询模式">
+              <button id="searchTab" class="tab active" type="button" role="tab" aria-selected="true">商品查询</button>
+              <button id="chapterTab" class="tab" type="button" role="tab" aria-selected="false">全品类浏览</button>
+            </div>
+
+            <form id="searchForm" class="search-form">
+              <label for="queryInput">品名 / HTS CODE</label>
+              <div class="search-row">
+                <input id="queryInput" name="query" type="search" value="coffee maker" autocomplete="off" />
+                <button class="primary-button" type="submit">查询</button>
+              </div>
+              <div class="quick-queries" aria-label="快捷查询">
+                <button type="button" data-query="coffee maker">coffee maker</button>
+                <button type="button" data-query="鞋">鞋</button>
+                <button type="button" data-query="8516.71.00">8516.71.00</button>
+              </div>
+            </form>
+
+            <div id="chapterTools" class="chapter-tools hidden">
+              <label for="chapterSelect">HTS 章节</label>
+              <div class="search-row">
+                <select id="chapterSelect"></select>
+                <button id="loadChapter" class="primary-button" type="button">载入</button>
+              </div>
+              <label for="chapterFilter">本章筛选</label>
+              <input id="chapterFilter" type="search" placeholder="输入英文品名或代码" />
+            </div>
+
+            <div class="result-meta">
+              <strong id="resultTitle">查询结果</strong>
+              <span id="resultCount">--</span>
+            </div>
+
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>HTS CODE</th>
+                    <th>商品描述</th>
+                    <th>基础普通税率</th>
+                    <th>附加税项</th>
+                    <th>特别税率</th>
+                    <th>Column 2</th>
+                  </tr>
+                </thead>
+                <tbody id="resultsBody"></tbody>
+              </table>
+              <div id="emptyState" class="empty-state hidden">暂无结果</div>
+            </div>
+          </div>
+
+          <aside class="side-rail">
+            <section class="tool-panel detail-panel">
+              <div class="panel-heading">
+                <p class="eyebrow">HTS DETAIL</p>
+                <h2 id="selectedCode">未选择</h2>
+              </div>
+              <div id="selectedDescription" class="description-text">从左侧结果选择一行。</div>
+              <div class="customs-info-card product-info-card">
+                <div class="customs-card-title primary">商品信息</div>
+                <div class="hs-code-row">
+                  <span>进口国 HS Code:</span>
+                  <strong id="miniHsCode">--</strong>
+                </div>
+                <div class="country-route" aria-label="中国到美国">
+                  <span class="country-label export">中国</span>
+                  <span class="route-line">----</span>
+                  <span class="route-arrow">›</span>
+                  <span class="route-line">----</span>
+                  <span class="country-label import">美国</span>
+                </div>
+                <p id="miniProductDescription" class="mini-product-description">从左侧结果选择一行。</p>
+              </div>
+              <div class="customs-info-card tax-info-card">
+                <div class="customs-card-title accent">其他信息</div>
+                <div class="customs-tax-row">
+                  <span>适用税率:</span>
+                  <strong id="effectiveRate">--</strong>
+                </div>
+                <div class="customs-tax-row">
+                  <span>一般税率:</span>
+                  <strong id="miniGeneralRate">--</strong>
+                </div>
+                <div class="customs-tax-row">
+                  <span>加征:</span>
+                  <strong id="surchargeRate" class="surcharge-rate">--</strong>
+                </div>
+                <div class="customs-restriction-row">
+                  <span>进口其他限制:</span>
+                  <div id="restrictionList" class="restriction-list">未选择商品</div>
+                </div>
+              </div>
+              <dl class="detail-grid">
+                <div>
+                  <dt>普通税率</dt>
+                  <dd id="detailGeneral">--</dd>
+                </div>
+                <div>
+                  <dt>特别税率</dt>
+                  <dd id="detailSpecial">--</dd>
+                </div>
+                <div>
+                  <dt>Column 2</dt>
+                  <dd id="detailOther">--</dd>
+                </div>
+                <div>
+                  <dt>单位</dt>
+                  <dd id="detailUnits">--</dd>
+                </div>
+              </dl>
+              <div class="additional-duty-box hidden">
+                <div class="mini-heading">
+                  <strong>附加税项 / Chapter 99</strong>
+                  <span>按脚注单独提取</span>
+                </div>
+                <div id="additionalDutyList" class="additional-duty-list">未选择商品</div>
+              </div>
+              <div id="detailNotes" class="note-list"></div>
+            </section>
+
+            <section class="tool-panel calc-panel">
+              <div class="panel-heading">
+                <p class="eyebrow">DUTY CALCULATOR</p>
+                <h2>进口税金计算</h2>
+              </div>
+
+              <div class="form-grid">
+                <label>
+                  申报完税价格 USD
+                  <input id="customsValue" type="number" min="0" step="0.01" value="10000" />
+                </label>
+                <label>
+                  普通税率 %
+                  <input id="generalRate" type="number" min="0" step="0.0001" value="0" />
+                </label>
+                <label>
+                  附加从价税 %
+                  <input id="additionalRate" type="number" min="0" step="0.0001" value="0" />
+                </label>
+                <label>
+                  固定税额 USD
+                  <input id="specificDuty" type="number" min="0" step="0.01" value="0" />
+                </label>
+              </div>
+
+              <div id="compoundDutyPanel" class="compound-duty-panel hidden">
+                <div class="compound-duty-heading">
+                  <strong>钟表复合普通税率 / Watch compound duty</strong>
+                  <span id="compoundDutyFormula">--</span>
+                </div>
+                <div class="compound-duty-grid">
+                  <label>
+                    数量 No.
+                    <input id="watchQuantity" type="number" min="0" step="1" value="0" />
+                  </label>
+                  <label>
+                    表壳价值 USD
+                    <input id="watchCaseValue" type="number" min="0" step="0.01" value="0" />
+                  </label>
+                  <label>
+                    表带 / 表链价值 USD
+                    <input id="watchStrapValue" type="number" min="0" step="0.01" value="0" />
+                  </label>
+                  <label>
+                    电池价值 USD
+                    <input id="watchBatteryValue" type="number" min="0" step="0.01" value="0" />
+                  </label>
+                </div>
+                <p id="compoundDutyNotice" class="compound-duty-notice">按 HTS 普通税率公式分项估算；各部件价值请按发票、成本拆分或报关资料填写。</p>
+              </div>
+
+              <div class="fee-grid">
+                <label class="check-row">
+                  <input id="mpfEnabled" type="checkbox" checked />
+                  MPF
+                </label>
+                <label>
+                  税率 %
+                  <input id="mpfRate" type="number" min="0" step="0.0001" value="0.3464" />
+                </label>
+                <label>
+                  最低 USD
+                  <input id="mpfMin" type="number" min="0" step="0.01" value="33.58" />
+                </label>
+                <label>
+                  最高 USD
+                  <input id="mpfMax" type="number" min="0" step="0.01" value="651.50" />
+                </label>
+                <label class="check-row">
+                  <input id="hmfEnabled" type="checkbox" />
+                  HMF
+                </label>
+                <label>
+                  HMF %
+                  <input id="hmfRate" type="number" min="0" step="0.0001" value="0.125" />
+                </label>
+              </div>
+
+              <div class="assessment-panel">
+                <div class="assessment-heading">
+                  <strong>专项税费 / Other assessments</strong>
+                  <span>棉费、AD/CVD、消费税、PGA/商品性费用</span>
+                </div>
+                <div class="assessment-grid">
+                  <label class="check-row">
+                    <input id="cottonFeeEnabled" type="checkbox" />
+                    棉费 Cotton
+                  </label>
+                  <label>
+                    棉费率 USD/kg
+                    <input id="cottonFeeRate" type="number" min="0" step="0.000001" value="0" />
+                  </label>
+                  <label>
+                    计费重量 kg
+                    <input id="cottonWeightKg" type="number" min="0" step="0.001" value="0" />
+                  </label>
+                  <label>
+                    AD/CVD %
+                    <input id="adCvdRate" type="number" min="0" step="0.0001" value="0" />
+                  </label>
+                  <label>
+                    消费税/固定税费 USD
+                    <input id="exciseAmount" type="number" min="0" step="0.01" value="0" />
+                  </label>
+                  <label>
+                    PGA/其他商品费 USD
+                    <input id="pgaFeeAmount" type="number" min="0" step="0.01" value="0" />
+                  </label>
+                </div>
+                <p id="assessmentNotice" class="assessment-notice">选择 HTS CODE 后自动检查棉费；其他专项费用可按官方或报关资料手动录入。</p>
+              </div>
+
+              <div class="calc-output">
+                <div>
+                  <span>基础关税</span>
+                  <strong id="baseDuty">$0.00</strong>
+                </div>
+                <div>
+                  <span>附加税</span>
+                  <strong id="extraDuty">$0.00</strong>
+                </div>
+                <ul id="additionalDutySplit" class="additional-duty-split"></ul>
+                <div>
+                  <span>MPF / HMF</span>
+                  <strong id="fees">$0.00</strong>
+                </div>
+                <div>
+                  <span>专项税费</span>
+                  <strong id="specialAssessments">$0.00</strong>
+                </div>
+                <div>
+                  <span>清关服务费</span>
+                  <strong id="clearanceFeeOutput">$0.00</strong>
+                </div>
+                <div class="total-line">
+                  <span>预估合计</span>
+                  <strong id="totalDuty">$0.00</strong>
+                </div>
+              </div>
+
+              <div id="taxBreakdown" class="tax-breakdown" aria-live="polite"></div>
+
+              <p id="calcMessage" class="calc-message">选择 HTS CODE 后自动带入可解析的从价税率。</p>
+            </section>
+          </aside>
+        </section>
+      </main>
+    </div>
+
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>
