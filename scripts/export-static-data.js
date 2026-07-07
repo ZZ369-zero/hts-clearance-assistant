@@ -183,6 +183,12 @@ async function exportCotton(manifest) {
     }
     throw error;
   });
+  if ((!data.rows || data.rows.length === 0) && old?.rows?.length) {
+    console.warn("Cotton export returned an empty table, keeping previous non-empty snapshot.");
+    data.rows = old.rows;
+    data.fetchedAt = old.fetchedAt;
+    data.retainedPreviousRows = true;
+  }
   await writeJson(path.join(dataDir, "cotton.json"), data);
   manifest.counts = { ...(manifest.counts || {}), cottonRows: data.rows?.length || 0 };
   setSourceState(manifest, "cotton", { count: data.rows?.length || 0, fetchedAt: data.fetchedAt || now });
