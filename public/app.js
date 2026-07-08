@@ -124,11 +124,11 @@ const staticSearchAliases = [
   { terms: ["笔记本电脑"], queries: ["laptop computer", "portable automatic data processing"], chapters: ["84"] },
   { terms: ["耳机"], queries: ["headphones", "earphones", "headsets"], chapters: ["85"] },
   { terms: ["鞋"], queries: ["footwear", "shoes"], chapters: ["64"] },
-  { terms: ["服饰", "服装", "衣服", "衣物", "成衣"], queries: ["apparel", "clothing", "garment", "garments", "wearing apparel"], chapters: ["61", "62"] },
-  { terms: ["无人机", "无人飞行器"], queries: ["unmanned aircraft", "unmanned aircraft parts"], chapters: ["88"] },
-  { terms: ["钟表", "手表", "钟", "表"], queries: ["watch", "watches", "clock", "clocks"], chapters: ["91"] },
-  { terms: ["滴剂", "滴液", "眼药水"], queries: ["medicaments primarily affecting the eyes", "medicaments", "measured doses", "drops", "oral suspension", "liquid form for oral intake"], chapters: ["30", "17", "21"] },
-  { terms: ["棉签"], queries: ["swab", "swabs", "flocked swabs"], chapters: ["56"] },
+  { terms: ["服饰", "服装", "衣服", "衣物", "成衣"], queries: ["apparel", "clothing", "garment", "garments", "wearing apparel"], chapters: ["61", "62"], prefixBoosts: ["61", "62"] },
+  { terms: ["无人机", "无人飞行器"], queries: ["unmanned aircraft", "unmanned aircraft parts"], chapters: ["88"], prefixBoosts: ["8806"] },
+  { terms: ["钟表", "手表", "钟", "表"], queries: ["wrist watches", "pocket watches", "other watches", "clocks", "watch", "watches", "clock"], chapters: ["91"], prefixBoosts: ["9101", "9102", "9103", "9105"] },
+  { terms: ["滴剂", "滴液", "眼药水"], queries: ["medicaments primarily affecting the eyes", "medicaments", "measured doses", "drops", "oral suspension", "liquid form for oral intake"], chapters: ["30", "17", "21"], prefixBoosts: ["3004", "3003", "3006"] },
+  { terms: ["棉签"], queries: ["swab", "swabs", "flocked swabs"], chapters: ["56"], prefixBoosts: ["5601220050"] },
   { terms: ["玩具"], queries: ["toy", "toys"], chapters: ["95"] },
   { terms: ["家具"], queries: ["furniture"], chapters: ["94"] },
   { terms: ["灯"], queries: ["lamp", "lighting"], chapters: ["85", "94"] },
@@ -1870,8 +1870,8 @@ async function staticSearch(query) {
 
   const index = await loadStaticData("hts-search-index.json");
   const plan = buildStaticSearchPlan(originalQuery);
-  const rows = (index.value || [])
-    .map((row) => ({ row, score: scoreStaticSearchRow(row, plan) }))
+  const rows = buildStaticSearchCandidates(index.value || [])
+    .map((candidate) => ({ row: candidate.row, score: scoreStaticSearchRow(candidate, plan) }))
     .filter((item) => item.score > 0)
     .sort((a, b) => b.score - a.score || String(a.row.htsno || "").localeCompare(String(b.row.htsno || "")))
     .map((item) => item.row)
@@ -1886,6 +1886,26 @@ async function staticSearch(query) {
   };
 }
 
+function buildStaticSearchCandidates(rows) {
+  const stack = [];
+  return rows.map((row) => {
+    const indent = Number(row.indent || 0);
+    while (stack.length && stack[stack.length - 1].indent >= indent) {
+      stack.pop();
+    }
+
+    const ownText = `${row.description || ""} ${row.descriptionZh || ""}`;
+    const parentText = stack.map((item) => item.text).join(" ");
+    const searchText = `${row.htsno || ""} ${parentText} ${ownText}`;
+
+    if (row.htsno) {
+      stack.push({ indent, text: ownText });
+    }
+
+    return { row, ownText, parentText, searchText };
+  });
+}
+
 function buildStaticSearchPlan(query) {
   const normalizedQuery = query.toLowerCase().trim();
   const aliasMatches = staticSearchAliases.filter((entry) =>
@@ -1897,10 +1917,14 @@ function buildStaticSearchPlan(query) {
       ...new Set(aliasMatches.flatMap((entry) => entry.queries).map((term) => term.toLowerCase().trim()).filter(Boolean))
     ];
     const chapterBoosts = new Set(aliasMatches.flatMap((entry) => entry.chapters || []));
+    const prefixBoosts = [
+      ...new Set(aliasMatches.flatMap((entry) => entry.prefixBoosts || []).map((prefix) => normalizeStaticHtsDigits(prefix)).filter(Boolean))
+    ];
     return {
       aliasMatched: true,
       terms,
       chapterBoosts,
+      prefixBoosts,
       requireAllTerms: false,
       displayQuery: terms.slice(0, 4).join(" / ")
     };
@@ -1910,19 +1934,25 @@ function buildStaticSearchPlan(query) {
     aliasMatched: false,
     terms: normalizedQuery.split(/[\s,，;；/]+/).map((term) => term.trim()).filter(Boolean),
     chapterBoosts: new Set(),
+    prefixBoosts: [],
     requireAllTerms: true,
     displayQuery: normalizedQuery
   };
 }
 
-function scoreStaticSearchRow(row, plan) {
-  const haystack = `${row.htsno || ""} ${row.description || ""} ${row.descriptionZh || ""}`.toLowerCase();
-  const descriptionHaystack = `${row.description || ""} ${row.descriptionZh || ""}`.toLowerCase();
+function scoreStaticSearchRow(candidate, plan) {
+  const row = candidate.row;
+  const ownHaystack = `${row.htsno || ""} ${candidate.ownText}`.toLowerCase();
+  const parentHaystack = (candidate.parentText || "").toLowerCase();
+  const descriptionHaystack = candidate.ownText.toLowerCase();
   let score = 0;
   let matches = 0;
 
   for (const term of plan.terms) {
-    let termScore = scoreStaticSearchTerm(haystack, term);
+    let termScore = scoreStaticSearchTerm(ownHaystack, term);
+    if (termScore <= 0 && !staticHasNegativeContext(parentHaystack, term)) {
+      termScore = Math.floor(scoreStaticSearchTerm(parentHaystack, term) * 0.65);
+    }
     if (termScore > 0) {
       if (staticDescriptionStartsWithTerm(descriptionHaystack, term)) {
         termScore += 60;
@@ -1941,9 +1971,60 @@ function scoreStaticSearchRow(row, plan) {
   const htsDigits = normalizeStaticHtsDigits(row.htsno);
   if (htsDigits && plan.chapterBoosts.has(htsDigits.slice(0, 2))) {
     score += 80;
-    if (htsDigits.length <= 4) {
-      score += 15;
+  }
+  for (const prefix of plan.prefixBoosts || []) {
+    if (htsDigits.startsWith(prefix)) {
+      score += prefix.length >= 4 ? 150 : 90;
     }
+  }
+
+  return score + scoreStaticCodeSpecificity(row) - scoreStaticAccessoryPenalty(row, plan);
+}
+
+function scoreStaticAccessoryPenalty(row, plan) {
+  const watchQuery = (plan.prefixBoosts || []).some((prefix) => ["9101", "9102", "9103", "9105"].includes(prefix));
+  if (!watchQuery) {
+    return 0;
+  }
+
+  const text = `${row.description || ""} ${row.descriptionZh || ""}`.toLowerCase();
+  if (/^straps,\s*bands\s+or\s+bracelets\s+entered\s+with\s+watches/.test(text)) {
+    return 220;
+  }
+  return 0;
+}
+
+function staticHasNegativeContext(haystack, term) {
+  const normalized = String(term || "").toLowerCase().trim();
+  if (!normalized || hasChineseText(normalized)) {
+    return false;
+  }
+  const pattern = escapeRegExpForSearch(normalized).replace(/\s+/g, "\\s+");
+  return new RegExp(`\\b(?:except|excluding|exclude|other\\s+than|not)\\b[^.;:]{0,90}${pattern}`, "i").test(haystack);
+}
+
+function scoreStaticCodeSpecificity(row) {
+  const digits = normalizeStaticHtsDigits(row.htsno);
+  let score = 0;
+
+  if (digits.length >= 10) {
+    score += 120;
+  } else if (digits.length >= 8) {
+    score += 95;
+  } else if (digits.length >= 6) {
+    score += 45;
+  } else if (digits.length >= 4) {
+    score += 5;
+  }
+
+  if (String(row.general || "").trim()) {
+    score += 30;
+  } else {
+    score -= 30;
+  }
+
+  if (String(row.description || "").trim().endsWith(":")) {
+    score -= 20;
   }
 
   return score;

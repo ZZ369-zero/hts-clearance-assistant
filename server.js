@@ -1659,7 +1659,7 @@ async function normalizeSearchRows(rows, query, force = false) {
     }
   }
 
-  return normalized;
+  return rankSearchRows(normalized);
 }
 
 async function findHtsFallbackRows(query, force = false) {
@@ -1709,6 +1709,37 @@ async function findHtsFallbackRows(query, force = false) {
   }
 
   return [];
+}
+
+function rankSearchRows(rows) {
+  return [...rows].sort((a, b) => scoreSearchSpecificity(b) - scoreSearchSpecificity(a) || String(a.htsno || "").localeCompare(String(b.htsno || "")));
+}
+
+function scoreSearchSpecificity(row) {
+  const digits = normalizeHtsDigits(row.htsno);
+  let score = 0;
+
+  if (digits.length >= 10) {
+    score += 120;
+  } else if (digits.length >= 8) {
+    score += 95;
+  } else if (digits.length >= 6) {
+    score += 45;
+  } else if (digits.length >= 4) {
+    score += 5;
+  }
+
+  if (String(row.general || "").trim()) {
+    score += 30;
+  } else {
+    score -= 30;
+  }
+
+  if (String(row.description || "").trim().endsWith(":")) {
+    score -= 20;
+  }
+
+  return score;
 }
 
 function applyRowInheritance(rows) {
