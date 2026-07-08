@@ -1177,6 +1177,97 @@ dd {
   color: #5b3a16;
 }
 
+.fee-match-panel,
+.manual-assessment-panel {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.assessment-subheading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--ink);
+}
+
+.assessment-subheading strong {
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.assessment-subheading span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.fee-match-list,
+.manual-assessment-list {
+  display: grid;
+  gap: 8px;
+}
+
+.fee-match-item,
+.manual-assessment-row {
+  display: grid;
+  gap: 7px;
+  border: 1px solid #dce5ec;
+  border-radius: 8px;
+  padding: 9px;
+  background: #fbfdff;
+}
+
+.fee-match-item {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+}
+
+.fee-match-item strong,
+.manual-assessment-row strong {
+  color: var(--navy);
+  font-size: 13px;
+}
+
+.fee-match-item small,
+.manual-assessment-row small {
+  display: block;
+  color: #5f6b76;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.fee-match-item > span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  border-radius: 999px;
+  padding: 2px 8px;
+  color: #245b4d;
+  background: #e5f4ed;
+  font-size: 12px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.fee-match-item.input > span {
+  color: #68400b;
+  background: #fff1d5;
+}
+
+.manual-assessment-row {
+  grid-template-columns: minmax(160px, 1.1fr) minmax(0, 1fr) minmax(0, 1fr);
+}
+
+.manual-assessment-row label {
+  min-width: 0;
+}
+
+.manual-assessment-row small {
+  grid-column: 1 / -1;
+}
+
 .calc-entry-card {
   display: grid;
   gap: 14px;

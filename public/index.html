@@ -374,6 +374,20 @@
                   </label>
                 </div>
                 <p id="assessmentNotice" class="assessment-notice">选择 HTS CODE 后自动检查棉费；其他专项费用可按官方或报关资料手动录入。</p>
+                <div id="feeMatchPanel" class="fee-match-panel hidden">
+                  <div class="assessment-subheading">
+                    <strong>税费目录命中</strong>
+                    <span>fee-catalog / rule-engine</span>
+                  </div>
+                  <div id="feeMatchList" class="fee-match-list"></div>
+                </div>
+                <div id="manualAssessmentPanel" class="manual-assessment-panel hidden">
+                  <div class="assessment-subheading">
+                    <strong>命中专项费参数</strong>
+                    <span>录入费率、数量或固定金额后纳入合计</span>
+                  </div>
+                  <div id="manualAssessmentList" class="manual-assessment-list"></div>
+                </div>
               </div>
 
               <div class="calc-output">

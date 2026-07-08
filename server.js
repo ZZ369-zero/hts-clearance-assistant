@@ -24,6 +24,25 @@ const TRANSLATE_API_BASE = "https://api.mymemory.translated.net/get";
 const ADCVD_CSV_PATH = path.resolve(__dirname, "..", "工作流", "中国输美_AD_CVD_HTS_CODE整理_主表.csv");
 const ADCVD_SOURCE_XLSX_PATH = path.resolve(__dirname, "..", "工作流", "中国输美_AD_CVD_HTS_CODE整理_2026-07-06.xlsx");
 
+const vehiclePartsSection232Options = [
+  {
+    code: "9903.94.05",
+    label: "232-汽车零配件",
+    materialCode: "automobile-parts",
+    materialLabel: "汽车零配件",
+    shortLabel: "汽车零配件",
+    context: "Automobile parts, as provided for in U.S. note 33 to Chapter 99."
+  },
+  {
+    code: "9903.74.08",
+    label: "232-重型汽车零配件",
+    materialCode: "heavy-duty-vehicle-parts",
+    materialLabel: "重型汽车零配件",
+    shortLabel: "重型车零配件",
+    context: "Medium- and heavy-duty vehicle parts, as provided for in U.S. note 38 to Chapter 99."
+  }
+];
+
 const cache = new Map();
 const syncState = new Map();
 const ttl = {
@@ -1424,11 +1443,12 @@ function findSection232Matches(hts, mappings, generalRateText = "") {
     return [];
   }
 
+  const vehicleMatches = buildVehiclePartsSection232Matches(hts, normalized);
   const directMatches = mappings.entries.filter((entry) =>
     normalized.startsWith(entry.hts) || entry.hts.startsWith(normalized)
   );
   if (!directMatches.length) {
-    return [];
+    return vehicleMatches;
   }
 
   const maxLength = Math.max(...directMatches.map((entry) => Math.min(entry.hts.length, normalized.length)));
@@ -1455,10 +1475,10 @@ function findSection232Matches(hts, mappings, generalRateText = "") {
 
   const preferred = ranked[0];
   if (!preferred) {
-    return [];
+    return vehicleMatches;
   }
 
-  return [{
+  return [...vehicleMatches, {
     code: preferred.entry.chapter99,
     htsMatch: preferred.entry.displayHts,
     normalizedMatch: preferred.entry.hts,
@@ -1472,8 +1492,34 @@ function findSection232Matches(hts, mappings, generalRateText = "") {
   }];
 }
 
+function buildVehiclePartsSection232Matches(hts, normalized = normalizeHtsDigits(hts)) {
+  if (!/^8708/.test(normalized || "")) {
+    return [];
+  }
+
+  return vehiclePartsSection232Options.map((option) => ({
+    code: option.code,
+    htsMatch: hts,
+    normalizedMatch: normalized,
+    context: option.context,
+    material: {
+      code: option.materialCode,
+      label: option.materialLabel,
+      shortLabel: option.shortLabel,
+      detailLabel: option.materialLabel
+    },
+    label: option.label,
+    confidence: normalized.length >= 6 ? "prefix" : "heading",
+    autoApply: false,
+    alternatives: vehiclePartsSection232Options.length,
+    source: "USITC Chapter 99",
+    summaryZh: `${option.label} ${option.code} 为车辆零配件 232 备选项，税率按 Chapter 99 读取；与 122/其他车辆 232 项多选一。`,
+    note: `${option.context} 与 122 临时关税及其他车辆零配件 232 项多选一，默认不自动计入。`
+  }));
+}
+
 function isSection232Chapter99(code) {
-  return /^9903\.(80|81|82|83|84|85)\.\d{2}$/.test(code);
+  return /^(9903\.(80|81|82|83|84|85)\.\d{2}|9903\.(94\.05|74\.08))$/.test(code);
 }
 
 function classifySection232Material(entry) {
@@ -1858,12 +1904,22 @@ function scoreServerSearchRow(row, plan) {
 }
 
 function scoreServerAccessoryPenalty(row, plan) {
-  const watchQuery = (plan.prefixBoosts || []).some((prefix) => ["9101", "9102", "9103", "9105"].includes(prefix));
-  if (!watchQuery) {
-    return 0;
-  }
   const text = normalizeSearchText(`${row.description || ""} ${row.descriptionZh || ""}`);
-  return /^straps,\s*bands\s+or\s+bracelets\s+entered\s+with\s+watches/.test(text) ? 220 : 0;
+  const queryTerms = [...(plan.terms || []), ...(plan.chineseTerms || [])].map((term) => normalizeSearchText(term));
+  let penalty = 0;
+
+  if (queryTerms.some((term) => term === "mango" || term === "mangoes" || term === "芒果") && /\bmangosteens?\b/.test(text)) {
+    penalty += 260;
+  }
+  if (queryTerms.some((term) => term.includes("christmas tree") || term === "圣诞树") && /\bartificial\b/.test(text)) {
+    penalty += 260;
+  }
+
+  const watchQuery = (plan.prefixBoosts || []).some((prefix) => ["9101", "9102", "9103", "9105"].includes(prefix));
+  if (watchQuery && /^straps,\s*bands\s+or\s+bracelets\s+entered\s+with\s+watches/.test(text)) {
+    penalty += 220;
+  }
+  return penalty;
 }
 
 function scoreSearchTerm(haystack, term) {

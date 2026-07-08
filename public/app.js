@@ -1,4 +1,11 @@
 import { chineseSearchCatalog, isMaterialCatalogEntry } from "./search-catalog.js";
+import {
+  buildManualAssessmentState,
+  calculateManualAssessments,
+  formatFeeInputLabel,
+  isManualAssessmentMatch,
+  matchFeeRules
+} from "./fee-rule-engine.js";
 
 const state = {
   mode: "search",
@@ -13,6 +20,8 @@ const state = {
   translationRequestId: 0,
   baseRateMessage: "",
   cottonAssessment: null,
+  feeMatches: [],
+  manualAssessments: {},
   transportMode: "ocean",
   clearanceMode: "t01",
   lastQuery: "",
@@ -90,6 +99,10 @@ const els = {
   adCvdRate: document.querySelector("#adCvdRate"),
   exciseAmount: document.querySelector("#exciseAmount"),
   pgaFeeAmount: document.querySelector("#pgaFeeAmount"),
+  feeMatchPanel: document.querySelector("#feeMatchPanel"),
+  feeMatchList: document.querySelector("#feeMatchList"),
+  manualAssessmentPanel: document.querySelector("#manualAssessmentPanel"),
+  manualAssessmentList: document.querySelector("#manualAssessmentList"),
   baseDuty: document.querySelector("#baseDuty"),
   extraDuty: document.querySelector("#extraDuty"),
   additionalDutySplit: document.querySelector("#additionalDutySplit"),
@@ -179,6 +192,27 @@ const dutyRuleCatalog = {
 
 const defaultAdditionalDutyCodes = ["9903.03.01"];
 
+const vehiclePartsSection232Options = [
+  {
+    code: "9903.94.05",
+    label: "232-汽车零配件",
+    materialCode: "automobile-parts",
+    materialLabel: "汽车零配件",
+    shortLabel: "汽车零配件",
+    context: "Automobile parts, as provided for in U.S. note 33 to Chapter 99."
+  },
+  {
+    code: "9903.74.08",
+    label: "232-重型汽车零配件",
+    materialCode: "heavy-duty-vehicle-parts",
+    materialLabel: "重型汽车零配件",
+    shortLabel: "重型车零配件",
+    context: "Medium- and heavy-duty vehicle parts, as provided for in U.S. note 38 to Chapter 99."
+  }
+];
+
+const vehiclePartsSection232CodeSet = new Set(vehiclePartsSection232Options.map((option) => option.code));
+
 init();
 
 async function init() {
@@ -233,6 +267,8 @@ function bindEvents() {
       refreshSyncSource(button.dataset.syncSource);
     }
   });
+  els.manualAssessmentList.addEventListener("input", handleManualAssessmentInput);
+  els.manualAssessmentList.addEventListener("change", handleManualAssessmentInput);
 
   [
     els.customsValue,
@@ -269,6 +305,9 @@ function setTransportMode(mode) {
   els.oceanFields.classList.toggle("hidden", !isOcean);
   els.airFields.classList.toggle("hidden", isOcean);
   els.hmfEnabled.checked = isOcean;
+  if (state.selected) {
+    updateFeeRuleMatches(state.selected, { preserveManualValues: true });
+  }
   updateModePanel();
   calculate();
 }
@@ -280,6 +319,9 @@ function setClearanceMode(mode) {
   els.t11Mode.classList.toggle("active", !isT01);
   els.t01Mode.setAttribute("aria-selected", String(isT01));
   els.t11Mode.setAttribute("aria-selected", String(!isT01));
+  if (state.selected) {
+    updateFeeRuleMatches(state.selected, { preserveManualValues: true });
+  }
   updateModePanel();
   calculate();
 }
@@ -664,7 +706,7 @@ function renderAdditionalCodes(row) {
         if (rule.exempt) {
           return `<span class="code-tag">${escapeHtml(rule.shortLabel)} ${escapeHtml(rule.exemptionCode || rule.code || "")} 豁免</span>`;
         }
-        const rate = rule.rate == null ? "需判断" : `+${rule.rate}%`;
+        const rate = rule.exemptionStatus === "多选1" ? "多选1" : rule.rate == null ? "需判断" : `+${rule.rate}%`;
         return `<span class="code-tag">${escapeHtml(rule.shortLabel)} ${escapeHtml(rule.code || "")} ${escapeHtml(rate)}</span>`;
       })
       .join("");
@@ -685,26 +727,40 @@ function buildAdditionalDutyRules(row, context = {}) {
       });
     }
     const catalog = dutyRuleCatalog[code] || inferDutyRuleByCode(code);
-    const temporary122Exemption = code === "9903.03.01" ? getTemporary122Exemption(row, context) : null;
+    const temporary122Choice = code === "9903.03.01" ? getTemporary122Choice(row, context) : null;
+    const temporary122Exemption = code === "9903.03.01" && !temporary122Choice ? getTemporary122Exemption(row, context) : null;
     return {
       code,
       group: catalog.group || catalog.shortLabel || "CH99",
       label: catalog.label || "Chapter 99 附加税",
       shortLabel: catalog.shortLabel || "CH99",
       rate: catalog.rate ?? null,
-      autoApply: temporary122Exemption ? false : catalog.autoApply !== false,
-      summaryZh: temporary122Exemption?.summaryZh || catalog.summaryZh,
-      exemptionStatus: temporary122Exemption ? "不计入" : catalog.exemptionStatus || "需确认",
-      note: temporary122Exemption?.note || catalog.note || "来自 USITC 脚注或常见附加税规则，需复核适用条件。",
+      autoApply: temporary122Choice || temporary122Exemption ? false : catalog.autoApply !== false,
+      summaryZh: temporary122Choice?.summaryZh || temporary122Exemption?.summaryZh || catalog.summaryZh,
+      exemptionStatus: temporary122Choice?.exemptionStatus || (temporary122Exemption ? "不计入" : catalog.exemptionStatus || "需确认"),
+      note: temporary122Choice?.note || temporary122Exemption?.note || catalog.note || "来自 USITC 脚注或常见附加税规则，需复核适用条件。",
       exempt: Boolean(temporary122Exemption),
       exemptionCode: temporary122Exemption?.code || ""
     };
   });
 }
 
+function getTemporary122Choice(row, context = {}) {
+  const section232Matches = context.section232Matches || [];
+  if (!hasVehiclePartsSection232Match(section232Matches) && !isPotentialVehiclePartsSection232(row)) {
+    return null;
+  }
+
+  return {
+    exemptionStatus: "多选1",
+    summaryZh: "122 临时关税与车辆零配件 232 项存在多选一关系；当前列出 9903.03.01 但不自动计入，请按实际车型/零配件适用项选择。",
+    note: "如适用 232-汽车零配件 9903.94.05 或 232-重型汽车零配件 9903.74.08，不应同时叠加 122 临时关税；如车辆 232 项不适用，可人工选择 122。"
+  };
+}
+
 function getTemporary122Exemption(row, context = {}) {
   const section232Matches = context.section232Matches || [];
-  const hasSection232Match = section232Matches.some((match) => match.autoApply !== false && /^9903\.(80|81|82|83|84|85)\.\d{2}$/.test(match.code || ""));
+  const hasSection232Match = section232Matches.some((match) => match.autoApply !== false && isSection232Code(match.code));
   if (!hasSection232Match && !isPotentialTemporary122Section232Exempt(row)) {
     return null;
   }
@@ -720,6 +776,15 @@ function isPotentialTemporary122Section232Exempt(row) {
   const hts = normalizeHtsCode(row.htsno);
   const description = `${row.description || ""} ${row.descriptionZh || ""}`.toLowerCase();
   return /^(72|73|74|76|83)/.test(hts) || /steel|iron|aluminum|aluminium|copper|铝|钢|铁|铜/.test(description);
+}
+
+function hasVehiclePartsSection232Match(matches = []) {
+  return matches.some((match) => isVehiclePartsSection232Code(match.code));
+}
+
+function isPotentialVehiclePartsSection232(row) {
+  const hts = normalizeHtsCode(row.htsno);
+  return /^8708/.test(hts);
 }
 
 function inferDutyRuleByCode(code) {
@@ -771,7 +836,7 @@ function buildSection232Rules(row, data) {
 function createSection232Rule(match, source = {}) {
   const sourceName = source?.name || match.source || "CBP Metals HTS List";
   const matchedHts = match.htsMatch ? `匹配 ${match.htsMatch}` : "匹配官方清单";
-  const alternatives = match.alternatives > 1 ? `；同一 HTS 存在 ${match.alternatives} 个条件项，已按中国进口场景选择通用项` : "";
+  const alternatives = match.alternatives > 1 ? `；同一 HTS 存在 ${match.alternatives} 个条件项，需按实际货物选择` : "";
   const material = match.material || {
     code: "metal-unspecified",
     label: "金属制品",
@@ -782,13 +847,13 @@ function createSection232Rule(match, source = {}) {
   return {
     code: match.code || "232-no-match",
     group: "232",
-    label: `232-${materialLabel}加征`,
+    label: match.label || `232-${materialLabel}加征`,
     shortLabel: "232",
     rate: null,
     autoApply: match.autoApply !== false,
-    summaryZh: `${sourceName} ${matchedHts}，材质归类为${materialLabel}，对应 ${match.code || "未命中"}。`,
+    summaryZh: match.summaryZh || `${sourceName} ${matchedHts}，材质归类为${materialLabel}，对应 ${match.code || "未命中"}。`,
     exemptionStatus: match.autoApply === false ? "需复核" : "官方匹配",
-    note: `${match.context || "Section 232 metals list"}${alternatives}`,
+    note: `${match.note || match.context || "Section 232 metals list"}${alternatives}`,
     material,
     source: "section232"
   };
@@ -823,7 +888,11 @@ function mergeAdditionalDutyBreakdown(items) {
 }
 
 function isSection232Code(code) {
-  return /^9903\.(80|81|82|83|84|85)\.\d{2}$/.test(String(code || ""));
+  return isVehiclePartsSection232Code(code) || /^9903\.(80|81|82|83|84|85)\.\d{2}$/.test(String(code || ""));
+}
+
+function isVehiclePartsSection232Code(code) {
+  return vehiclePartsSection232CodeSet.has(String(code || ""));
 }
 
 function isPotentialSteelAluminum(row) {
@@ -884,6 +953,7 @@ function selectRow(index) {
   state.selected = row;
   renderRows(state.visibleRows);
   renderDetail(row);
+  updateFeeRuleMatches(row);
   applyRate(row);
   loadAdditionalDuties(row);
   loadCottonAssessment(row);
@@ -894,7 +964,10 @@ function renderDetail(row) {
     state.additionalDutyRequestId += 1;
     state.additionalDutyBreakdown = [];
     state.compoundGeneralDuty = null;
+    state.feeMatches = [];
+    state.manualAssessments = {};
     renderCompoundDutyPanel(null);
+    renderFeeRulePanels();
     els.generalRate.readOnly = false;
     state.cottonAssessmentRequestId += 1;
     resetCottonAssessment("选择 HTS CODE 后自动检查棉费；其他专项费用可按官方或报关资料手动录入。");
@@ -1140,6 +1213,124 @@ function isPotentialCotton(row) {
   const hts = normalizeHtsCode(row.htsno);
   const description = `${row.description || ""} ${row.descriptionZh || ""}`.toLowerCase();
   return /^52/.test(hts) || /cotton|棉/.test(description);
+}
+
+function updateFeeRuleMatches(row, options = {}) {
+  const previous = options.preserveManualValues ? state.manualAssessments : {};
+  state.feeMatches = matchFeeRules(row, {
+    transportMode: state.transportMode,
+    clearanceMode: state.clearanceMode
+  });
+  state.manualAssessments = buildManualAssessmentState(state.feeMatches, previous);
+  renderFeeRulePanels();
+}
+
+function renderFeeRulePanels() {
+  renderFeeMatchPanel();
+  renderManualAssessmentPanel();
+}
+
+function renderFeeMatchPanel() {
+  if (!els.feeMatchPanel || !els.feeMatchList) {
+    return;
+  }
+
+  const matches = state.feeMatches || [];
+  els.feeMatchPanel.classList.toggle("hidden", matches.length === 0);
+  els.feeMatchList.innerHTML = matches
+    .map((match) => {
+      const status = getFeeMatchStatus(match);
+      return `
+        <div class="fee-match-item ${escapeHtml(match.implementation)}">
+          <div>
+            <strong>${escapeHtml(match.sequence)}. ${escapeHtml(match.nameZh)}</strong>
+            <small>${escapeHtml(match.code)} · ${escapeHtml(match.nameEn)}</small>
+            <small>${escapeHtml(match.note || "")}</small>
+          </div>
+          <span title="${escapeHtml(match.matchedBy || "")}">${escapeHtml(status)}</span>
+        </div>
+      `;
+    })
+    .join("");
+}
+
+function getFeeMatchStatus(match) {
+  if (match.implementation === "managed") {
+    return "已接入";
+  }
+  if (isManualAssessmentMatch(match)) {
+    return "待录入";
+  }
+  return "需复核";
+}
+
+function renderManualAssessmentPanel() {
+  if (!els.manualAssessmentPanel || !els.manualAssessmentList) {
+    return;
+  }
+
+  const entries = Object.values(state.manualAssessments || {});
+  els.manualAssessmentPanel.classList.toggle("hidden", entries.length === 0);
+  els.manualAssessmentList.innerHTML = entries
+    .map((entry) => renderManualAssessmentInput(entry))
+    .join("");
+}
+
+function renderManualAssessmentInput(entry) {
+  const match = entry.match;
+  if (match.calculation?.type === "manual-amount") {
+    return `
+      <div class="manual-assessment-row" data-fee-id="${escapeHtml(match.id)}">
+        <label class="check-row">
+          <input type="checkbox" data-fee-field="enabled" ${entry.enabled ? "checked" : ""} />
+          ${escapeHtml(match.nameZh)}
+        </label>
+        <label>
+          固定金额 USD
+          <input type="number" min="0" step="0.01" value="${escapeHtml(entry.amount || "")}" data-fee-field="amount" placeholder="0.00" />
+        </label>
+        <small>${escapeHtml(match.code)} · ${escapeHtml(match.note || "")}</small>
+      </div>
+    `;
+  }
+
+  return `
+    <div class="manual-assessment-row" data-fee-id="${escapeHtml(match.id)}">
+      <label class="check-row">
+        <input type="checkbox" data-fee-field="enabled" ${entry.enabled ? "checked" : ""} />
+        ${escapeHtml(match.nameZh)}
+      </label>
+      <label>
+        费率 USD/${escapeHtml(match.calculation?.unit || "unit")}
+        <input type="number" min="0" step="0.000001" value="${escapeHtml(entry.rate || "")}" data-fee-field="rate" placeholder="0" />
+      </label>
+      <label>
+        数量 ${escapeHtml(match.calculation?.unit || "unit")}
+        <input type="number" min="0" step="0.001" value="${escapeHtml(entry.quantity || "")}" data-fee-field="quantity" placeholder="0" />
+      </label>
+      <small>${escapeHtml(match.code)} · ${escapeHtml(formatFeeInputLabel(match))} · ${escapeHtml(match.note || "")}</small>
+    </div>
+  `;
+}
+
+function handleManualAssessmentInput(event) {
+  const field = event.target?.dataset?.feeField;
+  const row = event.target?.closest?.("[data-fee-id]");
+  if (!field || !row) {
+    return;
+  }
+
+  const entry = state.manualAssessments[row.dataset.feeId];
+  if (!entry) {
+    return;
+  }
+
+  if (field === "enabled") {
+    entry.enabled = event.target.checked;
+  } else {
+    entry[field] = event.target.value;
+  }
+  calculate();
 }
 
 function renderAdditionalDutyItem(item, parsed, rule, applied) {
@@ -1488,6 +1679,13 @@ function calculate() {
   const adCvd = value * (adCvdRate / 100);
   const exciseAmount = readNumber(els.exciseAmount);
   const pgaFeeAmount = readNumber(els.pgaFeeAmount);
+  const manualAssessmentDetails = calculateManualAssessments(state.manualAssessments);
+  const manualUserFeeDetails = manualAssessmentDetails.filter((item) => item.target === "user-fee");
+  const manualExciseDetails = manualAssessmentDetails.filter((item) => item.target === "excise");
+  const manualCommodityDetails = manualAssessmentDetails.filter((item) => item.target === "commodity");
+  const manualUserFeeTotal = manualUserFeeDetails.reduce((sum, item) => sum + item.amount, 0);
+  const manualExciseTotal = manualExciseDetails.reduce((sum, item) => sum + item.amount, 0);
+  const manualCommodityTotal = manualCommodityDetails.reduce((sum, item) => sum + item.amount, 0);
 
   const compoundGeneralDutyDetails = buildCompoundGeneralDutyCalcLines(state.compoundGeneralDuty);
   const baseDuty = state.compoundGeneralDuty
@@ -1505,8 +1703,8 @@ function calculate() {
   }
 
   const hmf = els.hmfEnabled.checked ? value * (hmfRate / 100) : 0;
-  const feeTotal = mpf + hmf;
-  const specialAssessmentTotal = cottonFee + adCvd + exciseAmount + pgaFeeAmount;
+  const feeTotal = mpf + hmf + manualUserFeeTotal;
+  const specialAssessmentTotal = cottonFee + adCvd + exciseAmount + manualExciseTotal + pgaFeeAmount + manualCommodityTotal;
   const total = baseDuty + extraDuty + feeTotal + specialAssessmentTotal + clearanceFee;
 
   els.baseDuty.textContent = money.format(baseDuty);
@@ -1539,6 +1737,12 @@ function calculate() {
     adCvdRate,
     exciseAmount,
     pgaFeeAmount,
+    manualUserFeeDetails,
+    manualUserFeeTotal,
+    manualExciseDetails,
+    manualExciseTotal,
+    manualCommodityDetails,
+    manualCommodityTotal,
     clearanceFee,
     total
   });
@@ -1612,6 +1816,14 @@ function renderTaxBreakdown(calc) {
       note: state.transportMode === "ocean" ? "海运默认纳入 HMF 估算。" : "空运通常不纳入 HMF。"
     },
     {
+      title: "其他用户费",
+      subtitle: "CBP User Fees",
+      rate: calc.manualUserFeeTotal ? "已录入" : "未录入",
+      amount: calc.manualUserFeeTotal,
+      note: "适用于非正式进口费、应税邮件费、人工申报附加费等按申报场景确认的用户费。",
+      children: calc.manualUserFeeDetails
+    },
+    {
       title: "棉费",
       subtitle: "Cotton Import Assessment",
       rate: els.cottonFeeEnabled.checked
@@ -1630,16 +1842,32 @@ function renderTaxBreakdown(calc) {
     {
       title: "消费税/固定税费",
       subtitle: "Excise / Specific fees",
-      rate: calc.exciseAmount ? "固定金额" : "未录入",
-      amount: calc.exciseAmount,
-      note: "适用于酒类、烟草、燃油等可能存在独立消费税或固定税费的商品。"
+      rate: calc.exciseAmount || calc.manualExciseTotal ? "已录入" : "未录入",
+      amount: calc.exciseAmount + calc.manualExciseTotal,
+      note: "适用于酒类、烟草、燃油等可能存在独立消费税或固定税费的商品。",
+      children: [
+        ...(calc.exciseAmount ? [{
+          displayName: "手动消费税/固定税费",
+          rateText: "固定金额",
+          amount: calc.exciseAmount
+        }] : []),
+        ...(calc.manualExciseDetails || [])
+      ]
     },
     {
       title: "PGA/其他商品费",
       subtitle: "PGA / Commodity assessments",
-      rate: calc.pgaFeeAmount ? "固定金额" : "未录入",
-      amount: calc.pgaFeeAmount,
-      note: "可用于 Beef、Pork、Honey、Sugar、Potato、Mushroom、Watermelon 等商品性评估费。"
+      rate: calc.pgaFeeAmount || calc.manualCommodityTotal ? "已录入" : "未录入",
+      amount: calc.pgaFeeAmount + calc.manualCommodityTotal,
+      note: "可用于 Beef、Pork、Honey、Sugar、Potato、Mushroom、Watermelon 等商品性评估费。",
+      children: [
+        ...(calc.pgaFeeAmount ? [{
+          displayName: "手动 PGA/其他商品费",
+          rateText: "固定金额",
+          amount: calc.pgaFeeAmount
+        }] : []),
+        ...(calc.manualCommodityDetails || [])
+      ]
     },
     {
       title: "清关服务费",
@@ -2000,16 +2228,22 @@ function scoreStaticSearchRow(candidate, plan) {
 }
 
 function scoreStaticAccessoryPenalty(row, plan) {
-  const watchQuery = (plan.prefixBoosts || []).some((prefix) => ["9101", "9102", "9103", "9105"].includes(prefix));
-  if (!watchQuery) {
-    return 0;
+  const text = normalizeSearchText(`${row.description || ""} ${row.descriptionZh || ""}`);
+  const queryTerms = [...(plan.terms || []), ...(plan.chineseTerms || [])].map((term) => normalizeSearchText(term));
+  let penalty = 0;
+
+  if (queryTerms.some((term) => term === "mango" || term === "mangoes" || term === "芒果") && /\bmangosteens?\b/.test(text)) {
+    penalty += 260;
+  }
+  if (queryTerms.some((term) => term.includes("christmas tree") || term === "圣诞树") && /\bartificial\b/.test(text)) {
+    penalty += 260;
   }
 
-  const text = `${row.description || ""} ${row.descriptionZh || ""}`.toLowerCase();
-  if (/^straps,\s*bands\s+or\s+bracelets\s+entered\s+with\s+watches/.test(text)) {
-    return 220;
+  const watchQuery = (plan.prefixBoosts || []).some((prefix) => ["9101", "9102", "9103", "9105"].includes(prefix));
+  if (watchQuery && /^straps,\s*bands\s+or\s+bracelets\s+entered\s+with\s+watches/.test(text)) {
+    penalty += 220;
   }
-  return 0;
+  return penalty;
 }
 
 function staticHasNegativeContext(haystack, term) {
@@ -2133,11 +2367,12 @@ async function staticSection232(hts, generalRateText = "") {
 function findStaticSection232Matches(hts, mappings, generalRateText = "") {
   const normalized = normalizeStaticHtsDigits(hts);
   const entries = mappings.entries || [];
+  const vehicleMatches = buildVehiclePartsSection232Matches(hts, normalized);
   const directMatches = entries.filter((entry) =>
     normalized.startsWith(entry.hts) || entry.hts.startsWith(normalized)
   );
   if (!directMatches.length) {
-    return [];
+    return vehicleMatches;
   }
 
   const maxLength = Math.max(...directMatches.map((entry) => Math.min(entry.hts.length, normalized.length)));
@@ -2164,10 +2399,10 @@ function findStaticSection232Matches(hts, mappings, generalRateText = "") {
 
   const preferred = ranked[0];
   if (!preferred) {
-    return [];
+    return vehicleMatches;
   }
 
-  return [{
+  return [...vehicleMatches, {
     code: preferred.entry.chapter99,
     htsMatch: preferred.entry.displayHts,
     normalizedMatch: preferred.entry.hts,
@@ -2179,6 +2414,32 @@ function findStaticSection232Matches(hts, mappings, generalRateText = "") {
     alternatives: ranked.length,
     source: "CBP Metals HTS List"
   }];
+}
+
+function buildVehiclePartsSection232Matches(hts, normalized = normalizeStaticHtsDigits(hts)) {
+  if (!/^8708/.test(normalized || "")) {
+    return [];
+  }
+
+  return vehiclePartsSection232Options.map((option) => ({
+    code: option.code,
+    htsMatch: hts,
+    normalizedMatch: normalized,
+    context: option.context,
+    material: {
+      code: option.materialCode,
+      label: option.materialLabel,
+      shortLabel: option.shortLabel,
+      detailLabel: option.materialLabel
+    },
+    label: option.label,
+    confidence: normalized.length >= 6 ? "prefix" : "heading",
+    autoApply: false,
+    alternatives: vehiclePartsSection232Options.length,
+    source: "USITC Chapter 99",
+    summaryZh: `${option.label} ${option.code} 为车辆零配件 232 备选项，税率按 Chapter 99 读取；与 122/其他车辆 232 项多选一。`,
+    note: `${option.context} 与 122 临时关税及其他车辆零配件 232 项多选一，默认不自动计入。`
+  }));
 }
 
 function classifyStaticSection232Material(entry) {
