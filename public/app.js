@@ -114,6 +114,44 @@ const staticRuntime = {
 const searchHistoryStorageKey = "hts-clearance-search-history";
 const searchHistoryLimit = 8;
 
+const staticSearchAliases = [
+  { terms: ["咖啡机"], queries: ["coffee maker", "coffee makers"], chapters: ["85"] },
+  { terms: ["咖啡"], queries: ["coffee"], chapters: ["09", "21"] },
+  { terms: ["茶"], queries: ["tea"], chapters: ["09"] },
+  { terms: ["手机"], queries: ["cellular phone", "telephone sets", "smartphones"], chapters: ["85"] },
+  { terms: ["电话"], queries: ["telephone", "telephones"], chapters: ["85"] },
+  { terms: ["电脑", "计算机"], queries: ["computer", "computers", "automatic data processing"], chapters: ["84"] },
+  { terms: ["笔记本电脑"], queries: ["laptop computer", "portable automatic data processing"], chapters: ["84"] },
+  { terms: ["耳机"], queries: ["headphones", "earphones", "headsets"], chapters: ["85"] },
+  { terms: ["鞋"], queries: ["footwear", "shoes"], chapters: ["64"] },
+  { terms: ["服饰", "服装", "衣服", "衣物", "成衣"], queries: ["apparel", "clothing", "garment", "garments", "wearing apparel"], chapters: ["61", "62"] },
+  { terms: ["无人机", "无人飞行器"], queries: ["unmanned aircraft", "unmanned aircraft parts"], chapters: ["88"] },
+  { terms: ["钟表", "手表", "钟", "表"], queries: ["watch", "watches", "clock", "clocks"], chapters: ["91"] },
+  { terms: ["滴剂", "滴液", "眼药水"], queries: ["medicaments primarily affecting the eyes", "medicaments", "measured doses", "drops", "oral suspension", "liquid form for oral intake"], chapters: ["30", "17", "21"] },
+  { terms: ["棉签"], queries: ["swab", "swabs", "flocked swabs"], chapters: ["56"] },
+  { terms: ["玩具"], queries: ["toy", "toys"], chapters: ["95"] },
+  { terms: ["家具"], queries: ["furniture"], chapters: ["94"] },
+  { terms: ["灯"], queries: ["lamp", "lighting"], chapters: ["85", "94"] },
+  { terms: ["电池"], queries: ["battery", "batteries"], chapters: ["85"] },
+  { terms: ["太阳能板", "太阳能组件"], queries: ["solar panel", "photovoltaic"], chapters: ["85"] },
+  { terms: ["自行车"], queries: ["bicycle", "bicycles"], chapters: ["87"] },
+  { terms: ["眼镜"], queries: ["spectacles", "eyewear", "glasses"], chapters: ["90"] },
+  { terms: ["包", "手袋"], queries: ["bag", "bags", "handbag", "handbags"], chapters: ["42"] },
+  { terms: ["箱包", "行李箱"], queries: ["luggage", "suitcases", "travel bags"], chapters: ["42"] },
+  { terms: ["塑料"], queries: ["plastic", "plastics"], chapters: ["39"] },
+  { terms: ["钢"], queries: ["steel"], chapters: ["72", "73"] },
+  { terms: ["铝"], queries: ["aluminum", "aluminium"], chapters: ["76"] },
+  { terms: ["木制品"], queries: ["wood article", "articles of wood"], chapters: ["44"] },
+  { terms: ["陶瓷"], queries: ["ceramic", "ceramics"], chapters: ["69"] },
+  { terms: ["纺织品"], queries: ["textile", "textiles"], chapters: ["50", "51", "52", "53", "54", "55", "56", "58", "59", "60", "63"] },
+  { terms: ["螺丝"], queries: ["screw", "screws", "fastener", "fasteners"], chapters: ["73"] },
+  { terms: ["泵"], queries: ["pump", "pumps"], chapters: ["84"] },
+  { terms: ["阀门"], queries: ["valve", "valves"], chapters: ["84"] },
+  { terms: ["轴承"], queries: ["bearing", "bearings"], chapters: ["84"] },
+  { terms: ["化妆品"], queries: ["cosmetic", "cosmetics"], chapters: ["33"] },
+  { terms: ["食品"], queries: ["food preparation", "food preparations"], chapters: ["16", "19", "20", "21"] }
+];
+
 const transportConfig = {
   ocean: {
     title: "海运 Ocean",
@@ -1831,21 +1869,119 @@ async function staticSearch(query) {
   }
 
   const index = await loadStaticData("hts-search-index.json");
-  const terms = originalQuery.toLowerCase().split(/\s+/).filter(Boolean);
+  const plan = buildStaticSearchPlan(originalQuery);
   const rows = (index.value || [])
-    .filter((row) => {
-      const haystack = `${row.htsno || ""} ${row.description || ""} ${row.descriptionZh || ""}`.toLowerCase();
-      return terms.every((term) => haystack.includes(term));
-    })
+    .map((row) => ({ row, score: scoreStaticSearchRow(row, plan) }))
+    .filter((item) => item.score > 0)
+    .sort((a, b) => b.score - a.score || String(a.row.htsno || "").localeCompare(String(b.row.htsno || "")))
+    .map((item) => item.row)
     .slice(0, 300);
 
   return {
     originalQuery,
-    query: originalQuery,
-    translated: false,
+    query: plan.displayQuery || originalQuery,
+    translated: plan.aliasMatched,
     count: rows.length,
     value: rows
   };
+}
+
+function buildStaticSearchPlan(query) {
+  const normalizedQuery = query.toLowerCase().trim();
+  const aliasMatches = staticSearchAliases.filter((entry) =>
+    entry.terms.some((term) => normalizedQuery.includes(term.toLowerCase()))
+  );
+
+  if (aliasMatches.length) {
+    const terms = [
+      ...new Set(aliasMatches.flatMap((entry) => entry.queries).map((term) => term.toLowerCase().trim()).filter(Boolean))
+    ];
+    const chapterBoosts = new Set(aliasMatches.flatMap((entry) => entry.chapters || []));
+    return {
+      aliasMatched: true,
+      terms,
+      chapterBoosts,
+      requireAllTerms: false,
+      displayQuery: terms.slice(0, 4).join(" / ")
+    };
+  }
+
+  return {
+    aliasMatched: false,
+    terms: normalizedQuery.split(/[\s,，;；/]+/).map((term) => term.trim()).filter(Boolean),
+    chapterBoosts: new Set(),
+    requireAllTerms: true,
+    displayQuery: normalizedQuery
+  };
+}
+
+function scoreStaticSearchRow(row, plan) {
+  const haystack = `${row.htsno || ""} ${row.description || ""} ${row.descriptionZh || ""}`.toLowerCase();
+  const descriptionHaystack = `${row.description || ""} ${row.descriptionZh || ""}`.toLowerCase();
+  let score = 0;
+  let matches = 0;
+
+  for (const term of plan.terms) {
+    let termScore = scoreStaticSearchTerm(haystack, term);
+    if (termScore > 0) {
+      if (staticDescriptionStartsWithTerm(descriptionHaystack, term)) {
+        termScore += 60;
+      }
+      score += termScore;
+      matches += 1;
+    } else if (plan.requireAllTerms) {
+      return 0;
+    }
+  }
+
+  if (!matches) {
+    return 0;
+  }
+
+  const htsDigits = normalizeStaticHtsDigits(row.htsno);
+  if (htsDigits && plan.chapterBoosts.has(htsDigits.slice(0, 2))) {
+    score += 80;
+    if (htsDigits.length <= 4) {
+      score += 15;
+    }
+  }
+
+  return score;
+}
+
+function staticDescriptionStartsWithTerm(description, term) {
+  const normalized = String(term || "").toLowerCase().trim();
+  if (!normalized) {
+    return false;
+  }
+  if (hasChineseText(normalized)) {
+    return description.startsWith(normalized);
+  }
+  const pattern = escapeRegExpForSearch(normalized).replace(/\s+/g, "\\s+");
+  return new RegExp(`^${pattern}([^a-z0-9]|$)`, "i").test(description);
+}
+
+function scoreStaticSearchTerm(haystack, term) {
+  const normalized = String(term || "").toLowerCase().trim();
+  if (!normalized) {
+    return 0;
+  }
+
+  if (hasChineseText(normalized)) {
+    return haystack.includes(normalized) ? 40 : 0;
+  }
+
+  const pattern = escapeRegExpForSearch(normalized).replace(/\s+/g, "\\s+");
+  const boundaryPattern = new RegExp(`(^|[^a-z0-9])${pattern}([^a-z0-9]|$)`, "i");
+  if (boundaryPattern.test(haystack)) {
+    return 20 + Math.min(35, normalized.length);
+  }
+
+  return normalized.length >= 4 && haystack.includes(normalized) ? 8 : 0;
+}
+
+function escapeRegExpForSearch(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 async function staticSearchByHts(digits) {
