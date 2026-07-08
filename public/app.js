@@ -195,6 +195,10 @@ const defaultAdditionalDutyCodes = ["9903.03.01"];
 const vehiclePartsSection232Options = [
   {
     code: "9903.94.05",
+    rate: 25,
+    autoApply: true,
+    choiceGroup: "vehicle-parts-section232",
+    choiceRank: 1,
     label: "232-汽车零配件",
     materialCode: "automobile-parts",
     materialLabel: "汽车零配件",
@@ -203,6 +207,10 @@ const vehiclePartsSection232Options = [
   },
   {
     code: "9903.74.08",
+    rate: 25,
+    autoApply: false,
+    choiceGroup: "vehicle-parts-section232",
+    choiceRank: 2,
     label: "232-重型汽车零配件",
     materialCode: "heavy-duty-vehicle-parts",
     materialLabel: "重型汽车零配件",
@@ -849,8 +857,10 @@ function createSection232Rule(match, source = {}) {
     group: "232",
     label: match.label || `232-${materialLabel}加征`,
     shortLabel: "232",
-    rate: null,
+    rate: match.rate ?? null,
     autoApply: match.autoApply !== false,
+    choiceGroup: match.choiceGroup || "",
+    choiceRank: match.choiceRank || 0,
     summaryZh: match.summaryZh || `${sourceName} ${matchedHts}，材质归类为${materialLabel}，对应 ${match.code || "未命中"}。`,
     exemptionStatus: match.autoApply === false ? "需复核" : "官方匹配",
     note: `${match.note || match.context || "Section 232 metals list"}${alternatives}`,
@@ -2434,11 +2444,14 @@ function buildVehiclePartsSection232Matches(hts, normalized = normalizeStaticHts
     },
     label: option.label,
     confidence: normalized.length >= 6 ? "prefix" : "heading",
-    autoApply: false,
+    rate: option.rate,
+    autoApply: option.autoApply !== false,
+    choiceGroup: option.choiceGroup,
+    choiceRank: option.choiceRank,
     alternatives: vehiclePartsSection232Options.length,
     source: "USITC Chapter 99",
     summaryZh: `${option.label} ${option.code} 为车辆零配件 232 备选项，税率按 Chapter 99 读取；与 122/其他车辆 232 项多选一。`,
-    note: `${option.context} 与 122 临时关税及其他车辆零配件 232 项多选一，默认不自动计入。`
+    note: `${option.context} 与 122 临时关税及其他车辆零配件 232 项多选一；${option.autoApply === false ? "按条件候选列示，不默认计入。" : "默认按车辆零配件 232 项计入估算。"}`
   }));
 }
 
