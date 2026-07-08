@@ -712,7 +712,8 @@ function renderAdditionalCodes(row) {
       .slice(0, 3)
       .map((rule) => {
         if (rule.exempt) {
-          return `<span class="code-tag">${escapeHtml(rule.shortLabel)} ${escapeHtml(rule.exemptionCode || rule.code || "")} 豁免</span>`;
+          const rate = rule.rate == null ? "" : ` ${formatRateNumber(rule.rate)}%`;
+          return `<span class="code-tag">${escapeHtml(rule.shortLabel)} ${escapeHtml(rule.code || "")}${escapeHtml(rate)} 豁免</span>`;
         }
         const rate = rule.exemptionStatus === "多选1" ? "多选1" : rule.rate == null ? "需判断" : `+${rule.rate}%`;
         return `<span class="code-tag">${escapeHtml(rule.shortLabel)} ${escapeHtml(rule.code || "")} ${escapeHtml(rate)}</span>`;
@@ -769,21 +770,46 @@ function getTemporary122Choice(row, context = {}) {
 function getTemporary122Exemption(row, context = {}) {
   const section232Matches = context.section232Matches || [];
   const hasSection232Match = section232Matches.some((match) => match.autoApply !== false && isSection232Code(match.code));
-  if (!hasSection232Match && !isPotentialTemporary122Section232Exempt(row)) {
+  const exclusion = getTemporary122Exclusion(row, { hasSection232Match });
+  if (!exclusion) {
     return null;
   }
 
   return {
     code: "9903.03.06",
-    summaryZh: "122 临时关税有关联，但该商品属于 9903.03.06 所列钢、铝、铜及其衍生品等排除范围，当前不计入 +10%。",
-    note: "9903.03.01 排除 9903.03.02-9903.03.11 所列商品；当前 HTS 命中 232/金属类排除规则，122 临时关税不自动加征。"
+    summaryZh: `122 临时关税有关联，但该商品属于 ${exclusion.label}，当前不计入 +10%。`,
+    note: `9903.03.01 排除 9903.03.02-9903.03.11 所列商品；${exclusion.note}`
   };
+}
+
+function getTemporary122Exclusion(row, context = {}) {
+  if (context.hasSection232Match || isPotentialTemporary122Section232Exempt(row)) {
+    return {
+      label: "9903.03.06 所列钢、铝、铜、车辆零配件或其他 232 排除范围",
+      note: "当前 HTS 命中 232/金属/车辆类排除规则，122 临时关税不自动加征。"
+    };
+  }
+
+  if (isPotentialTemporary122SemiconductorExempt(row)) {
+    return {
+      label: "9903.03.06 所列半导体相关商品排除范围",
+      note: "当前 HTS 为 8524.91 平板显示模块，按 9903.03.06 半导体相关商品排除范围处理，122 临时关税不自动加征。"
+    };
+  }
+
+  return null;
 }
 
 function isPotentialTemporary122Section232Exempt(row) {
   const hts = normalizeHtsCode(row.htsno);
   const description = `${row.description || ""} ${row.descriptionZh || ""}`.toLowerCase();
   return /^(72|73|74|76|83)/.test(hts) || /steel|iron|aluminum|aluminium|copper|铝|钢|铁|铜/.test(description);
+}
+
+function isPotentialTemporary122SemiconductorExempt(row) {
+  const hts = normalizeHtsCode(row.htsno);
+  const description = `${row.description || ""} ${row.descriptionZh || ""}`.toLowerCase();
+  return /^852491/.test(hts) || /flat panel display module|liquid crystal|liquid crystals|semiconductor|平板显示|液晶|半导体/.test(description);
 }
 
 function hasVehiclePartsSection232Match(matches = []) {
@@ -1344,8 +1370,14 @@ function handleManualAssessmentInput(event) {
 }
 
 function renderAdditionalDutyItem(item, parsed, rule, applied) {
-  const rateLabel = rule.exempt ? "不计入" : parsed.auto && parsed.rate > 0 ? `+${parsed.rate}%` : "需人工确认";
-  const applyLabel = rule.exempt ? "已按豁免排除" : applied ? "已计入估算" : "未自动计入";
+  const rateLabel = rule.exempt
+    ? parsed.auto && parsed.rate > 0
+      ? `${formatRateNumber(parsed.rate)}% 豁免`
+      : "豁免"
+    : parsed.auto && parsed.rate > 0
+    ? `+${parsed.rate}%`
+    : "需人工确认";
+  const applyLabel = rule.exempt ? "豁免，未计入估算" : applied ? "已计入估算" : "未自动计入";
   const englishLine = rule.summaryZh ? "" : `<p class="en-line">${escapeHtml(item.description || "--")}</p>`;
   return `
     <div class="additional-duty-item ${applied ? "applied" : "not-applied"}">
@@ -1363,9 +1395,17 @@ function renderAdditionalDutyItem(item, parsed, rule, applied) {
 
 function renderRestrictionItem(item, parsed, rule, applied) {
   const isSection232Miss = rule.source === "section232" && !/^99\d{2}\.\d{2}\.\d{2}$/.test(rule.code || "");
-  const code = rule.exempt ? compactChapter99Code(rule.exemptionCode || rule.code) : isSection232Miss ? "未命中" : compactChapter99Code(item.htsno || rule.code || "Chapter 99");
-  const rateLabel = rule.exempt ? "不加征" : isSection232Miss ? "不适用" : parsed.auto && parsed.rate > 0 ? `${formatRateNumber(parsed.rate)}%` : "需判断";
-  const status = rule.exempt ? "不计入" : rule.exemptionStatus || (applied ? "需复核" : "需确认");
+  const code = isSection232Miss ? "未命中" : compactChapter99Code(item.htsno || rule.code || "Chapter 99");
+  const rateLabel = rule.exempt
+    ? parsed.auto && parsed.rate > 0
+      ? `${formatRateNumber(parsed.rate)}%`
+      : "豁免"
+    : isSection232Miss
+    ? "不适用"
+    : parsed.auto && parsed.rate > 0
+    ? `${formatRateNumber(parsed.rate)}%`
+    : "需判断";
+  const status = rule.exempt ? "豁免" : rule.exemptionStatus || (applied ? "需复核" : "需确认");
   const title = `${rule.note || "需按申报条件复核"} ${applied ? "已计入估算。" : "未自动计入估算。"}`;
   const materialBadge = rule.material?.shortLabel
     ? `<em class="material-badge">${escapeHtml(rule.material.shortLabel)}</em>`
