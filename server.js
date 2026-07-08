@@ -4,6 +4,7 @@ import { networkInterfaces } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { inflateRawSync } from "node:zlib";
+import { chineseSearchCatalog, isMaterialCatalogEntry } from "./public/search-catalog.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.join(__dirname, "public");
@@ -629,27 +630,23 @@ async function handleApi(req, res, url) {
 
   if (url.pathname === "/api/search") {
     const originalQuery = (url.searchParams.get("q") || "").trim();
-    if ([...originalQuery].length < 2 && !chineseAliases.has(originalQuery)) {
+    if ([...originalQuery].length < 2 && !hasChineseText(originalQuery) && !chineseAliases.has(originalQuery)) {
       sendJson(res, 400, { error: "请输入至少 2 个字符" });
       return;
     }
 
-    const query = expandQuery(originalQuery);
     const force = url.searchParams.get("refresh") === "1";
-    const data = await usitcJson(
-      `search?keyword=${encodeURIComponent(query)}`,
-      `search:${query}`,
-      ttl.search,
-      force
-    );
-    let rows = await normalizeSearchRows(getRows(data), query, force);
+    const searchPlan = buildServerSearchPlan(originalQuery);
+    let rows = hasChineseText(originalQuery)
+      ? await searchStaticIndexRowsByPlan(searchPlan)
+      : await searchHtsRowsByPlan(searchPlan, force);
     if (!rows.length) {
-      rows = await findHtsFallbackRows(query, force);
+      rows = await findHtsFallbackRows(searchPlan.primaryQuery, force);
     }
     sendJson(res, 200, {
       originalQuery,
-      query,
-      translated: query !== originalQuery,
+      query: searchPlan.displayQuery,
+      translated: searchPlan.aliasMatched || searchPlan.displayQuery !== originalQuery,
       count: rows.length,
       value: rows
     });
@@ -1598,6 +1595,332 @@ function expandQuery(query) {
     }
   }
   return matches.length ? [...new Set(matches)].join(" ") : query;
+}
+
+function buildServerSearchPlan(query) {
+  const originalQuery = cleanValue(query);
+  const normalizedQuery = normalizeSearchText(originalQuery);
+  const digits = normalizeHtsDigits(originalQuery);
+
+  if (digits.length >= 4 || !hasChineseText(originalQuery)) {
+    return {
+      originalQuery,
+      primaryQuery: originalQuery,
+      queries: [originalQuery],
+      displayQuery: originalQuery,
+      aliasMatched: false,
+      plan: {
+        terms: splitSearchTerms(normalizedQuery),
+        chineseTerms: hasChineseText(originalQuery) ? [normalizedQuery] : [],
+        chapterBoosts: new Set(),
+        prefixBoosts: [],
+        requireAllTerms: !digits,
+        minimumMatches: 1
+      }
+    };
+  }
+
+  const catalogMatches = chineseSearchCatalog
+    .map((entry) => ({
+      ...entry,
+      matchedTerms: entry.terms.filter((term) => normalizedQuery.includes(normalizeSearchText(term)))
+    }))
+    .filter((entry) => entry.matchedTerms.length)
+    .sort((a, b) => longestTermLength(b.matchedTerms) - longestTermLength(a.matchedTerms));
+  const maxMatchedLength = Math.max(0, ...catalogMatches.flatMap((entry) => entry.matchedTerms).map((term) => [...term].length));
+  const focusedCatalogMatches = maxMatchedLength > 1
+    ? catalogMatches.filter((entry) => longestTermLength(entry.matchedTerms) > 1)
+    : catalogMatches;
+  const hasProductMatch = focusedCatalogMatches.some((entry) => !isMaterialCatalogEntry(entry));
+  const nonMaterialMatches = hasProductMatch
+    ? focusedCatalogMatches.filter((entry) => !isMaterialCatalogEntry(entry))
+    : focusedCatalogMatches;
+  const maxPrimaryLength = Math.max(0, ...nonMaterialMatches.map((entry) => longestTermLength(entry.matchedTerms)));
+  const primaryCatalogMatches = maxPrimaryLength > 1
+    ? nonMaterialMatches.filter((entry) => longestTermLength(entry.matchedTerms) === maxPrimaryLength)
+    : nonMaterialMatches;
+
+  const legacyExpanded = expandQuery(originalQuery);
+  const legacyTerms = !primaryCatalogMatches.length && legacyExpanded !== originalQuery ? splitSearchTerms(legacyExpanded) : [];
+  const terms = [
+    ...new Set([
+      ...primaryCatalogMatches.flatMap((entry) => entry.queries).map(normalizeSearchText),
+      ...legacyTerms.map(normalizeSearchText)
+    ].filter(Boolean))
+  ];
+  const chineseTerms = [
+    ...new Set([
+      ...primaryCatalogMatches.flatMap((entry) => entry.matchedTerms).map(normalizeSearchText),
+      normalizedQuery
+    ].filter(Boolean))
+  ];
+  const chapterBoosts = new Set(primaryCatalogMatches.flatMap((entry) => entry.chapters || []));
+  const prefixBoosts = [
+    ...new Set(primaryCatalogMatches.flatMap((entry) => entry.prefixBoosts || []).map(normalizeHtsDigits).filter(Boolean))
+  ];
+
+  const queries = buildServerSearchQueries(terms, originalQuery);
+  return {
+    originalQuery,
+    primaryQuery: queries[0] || originalQuery,
+    queries,
+    displayQuery: terms.length ? terms.slice(0, 6).join(" / ") : originalQuery,
+    aliasMatched: primaryCatalogMatches.length > 0 || legacyTerms.length > 0,
+    plan: {
+      terms,
+      chineseTerms,
+      chapterBoosts,
+      prefixBoosts,
+      requireAllTerms: false,
+      minimumMatches: 1
+    }
+  };
+}
+
+function buildServerSearchQueries(terms, originalQuery) {
+  const queries = [];
+  for (const term of terms) {
+    if (term && !queries.includes(term)) {
+      queries.push(term);
+    }
+  }
+  const compact = terms.slice(0, 4).join(" ").trim();
+  if (compact && !queries.includes(compact)) {
+    queries.unshift(compact);
+  }
+  if (!queries.length) {
+    queries.push(originalQuery);
+  }
+  return queries.slice(0, 10);
+}
+
+async function searchHtsRowsByPlan(searchPlan, force = false) {
+  const rowsByKey = new Map();
+
+  for (const query of searchPlan.queries) {
+    const data = await usitcJson(
+      `search?keyword=${encodeURIComponent(query)}`,
+      `search:${query}`,
+      ttl.search,
+      force
+    );
+    const rows = await normalizeSearchRows(getRows(data), query, force);
+    for (const row of rows) {
+      const key = `${row.htsno}|${row.description}|${row.general}`;
+      if (!rowsByKey.has(key)) {
+        rowsByKey.set(key, row);
+      }
+    }
+  }
+
+  const rows = [...rowsByKey.values()];
+  if (!rows.length) {
+    return [];
+  }
+
+  return rankRowsBySearchPlan(rows, searchPlan.plan).slice(0, 300);
+}
+
+async function searchStaticIndexRowsByPlan(searchPlan) {
+  const indexPath = path.join(publicDir, "data", "hts-search-index.json");
+  const data = JSON.parse(await readFile(indexPath, "utf8"));
+  const rows = buildServerSearchCandidates(data.value || [])
+    .map((candidate) => ({ row: candidate.row, score: scoreServerSearchCandidate(candidate, searchPlan.plan) }))
+    .filter((item) => item.score > 0)
+    .sort((a, b) => b.score - a.score || String(a.row.htsno || "").localeCompare(String(b.row.htsno || "")))
+    .map((item) => item.row)
+    .slice(0, 300);
+  return rows;
+}
+
+function buildServerSearchCandidates(rows) {
+  const stack = [];
+  return rows.map((row) => {
+    const indent = Number(row.indent || 0);
+    while (stack.length && stack[stack.length - 1].indent >= indent) {
+      stack.pop();
+    }
+
+    const ownText = `${row.description || ""} ${row.descriptionZh || ""}`;
+    const parentText = stack.map((item) => item.text).join(" ");
+
+    if (row.htsno) {
+      stack.push({ indent, text: ownText });
+    }
+
+    return { row, ownText, parentText };
+  });
+}
+
+function rankRowsBySearchPlan(rows, plan) {
+  return rows
+    .map((row) => ({ row, score: scoreServerSearchRow(row, plan) }))
+    .filter((item) => item.score > 0)
+    .sort((a, b) => b.score - a.score || String(a.row.htsno || "").localeCompare(String(b.row.htsno || "")))
+    .map((item) => item.row);
+}
+
+function scoreServerSearchCandidate(candidate, plan) {
+  const row = candidate.row;
+  const ownHaystack = normalizeSearchText(`${row.htsno || ""} ${candidate.ownText || ""}`);
+  const parentHaystack = normalizeSearchText(candidate.parentText || "");
+  const descriptionHaystack = normalizeSearchText(candidate.ownText || "");
+  let score = 0;
+  let matches = 0;
+
+  for (const term of plan.terms || []) {
+    let termScore = scoreSearchTerm(ownHaystack, term);
+    if (termScore <= 0 && !hasNegativeSearchContext(parentHaystack, term)) {
+      termScore = Math.floor(scoreSearchTerm(parentHaystack, term) * 0.35);
+    }
+    if (termScore > 0) {
+      score += staticDescriptionStartsWithTermServer(descriptionHaystack, term) ? termScore + 60 : termScore;
+      matches += 1;
+    } else if (plan.requireAllTerms) {
+      return 0;
+    }
+  }
+
+  for (const term of plan.chineseTerms || []) {
+    const termScore = scoreSearchTerm(ownHaystack, term) || Math.floor(scoreSearchTerm(parentHaystack, term) * 0.35);
+    if (termScore > 0) {
+      score += termScore + 15;
+      matches += 1;
+    }
+  }
+
+  if (!matches || matches < (plan.minimumMatches || 1)) {
+    return 0;
+  }
+
+  const ownTermMatches = (plan.terms || []).filter((term) => scoreSearchTerm(ownHaystack, term) > 0).length;
+  if (ownTermMatches >= 2) {
+    score += 45 + ownTermMatches * 15;
+  }
+
+  const htsDigits = normalizeHtsDigits(row.htsno);
+  if (htsDigits && plan.chapterBoosts?.has(htsDigits.slice(0, 2))) {
+    score += 80;
+  }
+  for (const prefix of plan.prefixBoosts || []) {
+    if (htsDigits.startsWith(prefix)) {
+      score += prefix.length >= 6 ? 260 : prefix.length >= 4 ? 170 : 90;
+    }
+  }
+
+  return score + scoreSearchSpecificity(row) - scoreServerAccessoryPenalty(row, plan);
+}
+
+function scoreServerSearchRow(row, plan) {
+  const haystack = normalizeSearchText(`${row.htsno || ""} ${row.description || ""} ${row.descriptionZh || ""}`);
+  const description = normalizeSearchText(`${row.description || ""} ${row.descriptionZh || ""}`);
+  let score = 0;
+  let matches = 0;
+
+  for (const term of plan.terms || []) {
+    const termScore = scoreSearchTerm(haystack, term);
+    if (termScore > 0) {
+      score += staticDescriptionStartsWithTermServer(description, term) ? termScore + 60 : termScore;
+      matches += 1;
+    } else if (plan.requireAllTerms) {
+      return 0;
+    }
+  }
+
+  for (const term of plan.chineseTerms || []) {
+    const termScore = scoreSearchTerm(haystack, term);
+    if (termScore > 0) {
+      score += termScore + 15;
+      matches += 1;
+    }
+  }
+
+  if (!matches || matches < (plan.minimumMatches || 1)) {
+    return 0;
+  }
+
+  const ownTermMatches = (plan.terms || []).filter((term) => scoreSearchTerm(haystack, term) > 0).length;
+  if (ownTermMatches >= 2) {
+    score += 45 + ownTermMatches * 15;
+  }
+
+  const htsDigits = normalizeHtsDigits(row.htsno);
+  if (htsDigits && plan.chapterBoosts?.has(htsDigits.slice(0, 2))) {
+    score += 80;
+  }
+  for (const prefix of plan.prefixBoosts || []) {
+    if (htsDigits.startsWith(prefix)) {
+      score += prefix.length >= 6 ? 260 : prefix.length >= 4 ? 170 : 90;
+    }
+  }
+
+  return score + scoreSearchSpecificity(row) - scoreServerAccessoryPenalty(row, plan);
+}
+
+function scoreServerAccessoryPenalty(row, plan) {
+  const watchQuery = (plan.prefixBoosts || []).some((prefix) => ["9101", "9102", "9103", "9105"].includes(prefix));
+  if (!watchQuery) {
+    return 0;
+  }
+  const text = normalizeSearchText(`${row.description || ""} ${row.descriptionZh || ""}`);
+  return /^straps,\s*bands\s+or\s+bracelets\s+entered\s+with\s+watches/.test(text) ? 220 : 0;
+}
+
+function scoreSearchTerm(haystack, term) {
+  const normalized = normalizeSearchText(term);
+  if (!normalized) {
+    return 0;
+  }
+  if (hasChineseText(normalized)) {
+    return haystack.includes(normalized) ? 40 : 0;
+  }
+  const pattern = escapeRegExp(normalized).replace(/\s+/g, "\\s+");
+  const boundaryPattern = new RegExp(`(^|[^a-z0-9])${pattern}([^a-z0-9]|$)`, "i");
+  if (boundaryPattern.test(haystack)) {
+    return 20 + Math.min(35, normalized.length);
+  }
+  return normalized.length >= 4 && haystack.includes(normalized) ? 8 : 0;
+}
+
+function hasNegativeSearchContext(haystack, term) {
+  const normalized = normalizeSearchText(term);
+  if (!normalized || hasChineseText(normalized)) {
+    return false;
+  }
+  const pattern = escapeRegExp(normalized).replace(/\s+/g, "\\s+");
+  return new RegExp(`\\b(?:except|excluding|exclude|other\\s+than|not)\\b[^.;:]{0,90}${pattern}`, "i").test(haystack);
+}
+
+function staticDescriptionStartsWithTermServer(description, term) {
+  const normalized = normalizeSearchText(term);
+  if (!normalized) {
+    return false;
+  }
+  if (hasChineseText(normalized)) {
+    return description.startsWith(normalized);
+  }
+  const pattern = escapeRegExp(normalized).replace(/\s+/g, "\\s+");
+  return new RegExp(`^${pattern}([^a-z0-9]|$)`, "i").test(description);
+}
+
+function splitSearchTerms(value) {
+  return String(value || "")
+    .split(/[\s,，;；/、|]+/)
+    .map((term) => term.trim())
+    .filter(Boolean);
+}
+
+function normalizeSearchText(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[’`]/g, "'")
+    .replace(/[，。；：、（）【】]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function longestTermLength(terms) {
+  return Math.max(0, ...terms.map((term) => [...String(term || "")].length));
 }
 
 function normalizeRows(rows) {

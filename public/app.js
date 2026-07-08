@@ -1,3 +1,5 @@
+import { chineseSearchCatalog, isMaterialCatalogEntry } from "./search-catalog.js";
+
 const state = {
   mode: "search",
   rows: [],
@@ -113,44 +115,6 @@ const staticRuntime = {
 
 const searchHistoryStorageKey = "hts-clearance-search-history";
 const searchHistoryLimit = 8;
-
-const staticSearchAliases = [
-  { terms: ["咖啡机"], queries: ["coffee maker", "coffee makers"], chapters: ["85"] },
-  { terms: ["咖啡"], queries: ["coffee"], chapters: ["09", "21"] },
-  { terms: ["茶"], queries: ["tea"], chapters: ["09"] },
-  { terms: ["手机"], queries: ["cellular phone", "telephone sets", "smartphones"], chapters: ["85"] },
-  { terms: ["电话"], queries: ["telephone", "telephones"], chapters: ["85"] },
-  { terms: ["电脑", "计算机"], queries: ["computer", "computers", "automatic data processing"], chapters: ["84"] },
-  { terms: ["笔记本电脑"], queries: ["laptop computer", "portable automatic data processing"], chapters: ["84"] },
-  { terms: ["耳机"], queries: ["headphones", "earphones", "headsets"], chapters: ["85"] },
-  { terms: ["鞋"], queries: ["footwear", "shoes"], chapters: ["64"] },
-  { terms: ["服饰", "服装", "衣服", "衣物", "成衣"], queries: ["apparel", "clothing", "garment", "garments", "wearing apparel"], chapters: ["61", "62"], prefixBoosts: ["61", "62"] },
-  { terms: ["无人机", "无人飞行器"], queries: ["unmanned aircraft", "unmanned aircraft parts"], chapters: ["88"], prefixBoosts: ["8806"] },
-  { terms: ["钟表", "手表", "钟", "表"], queries: ["wrist watches", "pocket watches", "other watches", "clocks", "watch", "watches", "clock"], chapters: ["91"], prefixBoosts: ["9101", "9102", "9103", "9105"] },
-  { terms: ["滴剂", "滴液", "眼药水"], queries: ["medicaments primarily affecting the eyes", "medicaments", "measured doses", "drops", "oral suspension", "liquid form for oral intake"], chapters: ["30", "17", "21"], prefixBoosts: ["3004", "3003", "3006"] },
-  { terms: ["棉签"], queries: ["swab", "swabs", "flocked swabs"], chapters: ["56"], prefixBoosts: ["5601220050"] },
-  { terms: ["玩具"], queries: ["toy", "toys"], chapters: ["95"] },
-  { terms: ["家具"], queries: ["furniture"], chapters: ["94"] },
-  { terms: ["灯"], queries: ["lamp", "lighting"], chapters: ["85", "94"] },
-  { terms: ["电池"], queries: ["battery", "batteries"], chapters: ["85"] },
-  { terms: ["太阳能板", "太阳能组件"], queries: ["solar panel", "photovoltaic"], chapters: ["85"] },
-  { terms: ["自行车"], queries: ["bicycle", "bicycles"], chapters: ["87"] },
-  { terms: ["眼镜"], queries: ["spectacles", "eyewear", "glasses"], chapters: ["90"] },
-  { terms: ["包", "手袋"], queries: ["bag", "bags", "handbag", "handbags"], chapters: ["42"] },
-  { terms: ["箱包", "行李箱"], queries: ["luggage", "suitcases", "travel bags"], chapters: ["42"] },
-  { terms: ["塑料"], queries: ["plastic", "plastics"], chapters: ["39"] },
-  { terms: ["钢"], queries: ["steel"], chapters: ["72", "73"] },
-  { terms: ["铝"], queries: ["aluminum", "aluminium"], chapters: ["76"] },
-  { terms: ["木制品"], queries: ["wood article", "articles of wood"], chapters: ["44"] },
-  { terms: ["陶瓷"], queries: ["ceramic", "ceramics"], chapters: ["69"] },
-  { terms: ["纺织品"], queries: ["textile", "textiles"], chapters: ["50", "51", "52", "53", "54", "55", "56", "58", "59", "60", "63"] },
-  { terms: ["螺丝"], queries: ["screw", "screws", "fastener", "fasteners"], chapters: ["73"] },
-  { terms: ["泵"], queries: ["pump", "pumps"], chapters: ["84"] },
-  { terms: ["阀门"], queries: ["valve", "valves"], chapters: ["84"] },
-  { terms: ["轴承"], queries: ["bearing", "bearings"], chapters: ["84"] },
-  { terms: ["化妆品"], queries: ["cosmetic", "cosmetics"], chapters: ["33"] },
-  { terms: ["食品"], queries: ["food preparation", "food preparations"], chapters: ["16", "19", "20", "21"] }
-];
 
 const transportConfig = {
   ocean: {
@@ -1907,51 +1871,92 @@ function buildStaticSearchCandidates(rows) {
 }
 
 function buildStaticSearchPlan(query) {
-  const normalizedQuery = query.toLowerCase().trim();
-  const aliasMatches = staticSearchAliases.filter((entry) =>
-    entry.terms.some((term) => normalizedQuery.includes(term.toLowerCase()))
-  );
+  const normalizedQuery = normalizeSearchText(query);
+  const aliasMatches = chineseSearchCatalog
+    .map((entry) => ({
+      ...entry,
+      matchedTerms: entry.terms.filter((term) => normalizedQuery.includes(normalizeSearchText(term)))
+    }))
+    .filter((entry) => entry.matchedTerms.length)
+    .sort((a, b) => longestTermLength(b.matchedTerms) - longestTermLength(a.matchedTerms));
+  const maxMatchedLength = Math.max(0, ...aliasMatches.flatMap((entry) => entry.matchedTerms).map((term) => [...term].length));
+  const focusedAliasMatches = maxMatchedLength > 1
+    ? aliasMatches.filter((entry) => longestTermLength(entry.matchedTerms) > 1)
+    : aliasMatches;
+  const hasProductMatch = focusedAliasMatches.some((entry) => !isMaterialCatalogEntry(entry));
+  const nonMaterialMatches = hasProductMatch
+    ? focusedAliasMatches.filter((entry) => !isMaterialCatalogEntry(entry))
+    : focusedAliasMatches;
+  const maxPrimaryLength = Math.max(0, ...nonMaterialMatches.map((entry) => longestTermLength(entry.matchedTerms)));
+  const primaryAliasMatches = maxPrimaryLength > 1
+    ? nonMaterialMatches.filter((entry) => longestTermLength(entry.matchedTerms) === maxPrimaryLength)
+    : nonMaterialMatches;
 
-  if (aliasMatches.length) {
+  if (primaryAliasMatches.length) {
     const terms = [
-      ...new Set(aliasMatches.flatMap((entry) => entry.queries).map((term) => term.toLowerCase().trim()).filter(Boolean))
+      ...new Set(primaryAliasMatches.flatMap((entry) => entry.queries).map((term) => normalizeSearchText(term)).filter(Boolean))
     ];
-    const chapterBoosts = new Set(aliasMatches.flatMap((entry) => entry.chapters || []));
+    const chapterBoosts = new Set(primaryAliasMatches.flatMap((entry) => entry.chapters || []));
     const prefixBoosts = [
-      ...new Set(aliasMatches.flatMap((entry) => entry.prefixBoosts || []).map((prefix) => normalizeStaticHtsDigits(prefix)).filter(Boolean))
+      ...new Set(primaryAliasMatches.flatMap((entry) => entry.prefixBoosts || []).map((prefix) => normalizeStaticHtsDigits(prefix)).filter(Boolean))
     ];
+    const chineseTerms = [...new Set(primaryAliasMatches.flatMap((entry) => entry.matchedTerms).map(normalizeSearchText).filter(Boolean))];
     return {
       aliasMatched: true,
       terms,
+      chineseTerms,
       chapterBoosts,
       prefixBoosts,
       requireAllTerms: false,
+      minimumMatches: 1,
       displayQuery: terms.slice(0, 4).join(" / ")
     };
   }
 
   return {
     aliasMatched: false,
-    terms: normalizedQuery.split(/[\s,，;；/]+/).map((term) => term.trim()).filter(Boolean),
+    terms: splitSearchTerms(normalizedQuery),
+    chineseTerms: hasChineseText(normalizedQuery) ? [normalizedQuery] : [],
     chapterBoosts: new Set(),
     prefixBoosts: [],
     requireAllTerms: true,
+    minimumMatches: 1,
     displayQuery: normalizedQuery
   };
 }
 
+function splitSearchTerms(value) {
+  return String(value || "")
+    .split(/[\s,，;；/、|]+/)
+    .map((term) => term.trim())
+    .filter(Boolean);
+}
+
+function normalizeSearchText(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[’`]/g, "'")
+    .replace(/[，。；：、（）【】]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function longestTermLength(terms) {
+  return Math.max(0, ...terms.map((term) => [...String(term || "")].length));
+}
+
 function scoreStaticSearchRow(candidate, plan) {
   const row = candidate.row;
-  const ownHaystack = `${row.htsno || ""} ${candidate.ownText}`.toLowerCase();
-  const parentHaystack = (candidate.parentText || "").toLowerCase();
-  const descriptionHaystack = candidate.ownText.toLowerCase();
+  const ownHaystack = normalizeSearchText(`${row.htsno || ""} ${candidate.ownText}`);
+  const parentHaystack = normalizeSearchText(candidate.parentText || "");
+  const descriptionHaystack = normalizeSearchText(candidate.ownText);
   let score = 0;
   let matches = 0;
 
   for (const term of plan.terms) {
     let termScore = scoreStaticSearchTerm(ownHaystack, term);
     if (termScore <= 0 && !staticHasNegativeContext(parentHaystack, term)) {
-      termScore = Math.floor(scoreStaticSearchTerm(parentHaystack, term) * 0.65);
+      termScore = Math.floor(scoreStaticSearchTerm(parentHaystack, term) * 0.35);
     }
     if (termScore > 0) {
       if (staticDescriptionStartsWithTerm(descriptionHaystack, term)) {
@@ -1964,8 +1969,21 @@ function scoreStaticSearchRow(candidate, plan) {
     }
   }
 
-  if (!matches) {
+  for (const term of plan.chineseTerms || []) {
+    const termScore = scoreStaticSearchTerm(ownHaystack, term) || Math.floor(scoreStaticSearchTerm(parentHaystack, term) * 0.35);
+    if (termScore > 0) {
+      score += termScore + 15;
+      matches += 1;
+    }
+  }
+
+  if (!matches || matches < (plan.minimumMatches || 1)) {
     return 0;
+  }
+
+  const ownTermMatches = (plan.terms || []).filter((term) => scoreStaticSearchTerm(ownHaystack, term) > 0).length;
+  if (ownTermMatches >= 2) {
+    score += 45 + ownTermMatches * 15;
   }
 
   const htsDigits = normalizeStaticHtsDigits(row.htsno);
@@ -1974,7 +1992,7 @@ function scoreStaticSearchRow(candidate, plan) {
   }
   for (const prefix of plan.prefixBoosts || []) {
     if (htsDigits.startsWith(prefix)) {
-      score += prefix.length >= 4 ? 150 : 90;
+      score += prefix.length >= 6 ? 260 : prefix.length >= 4 ? 170 : 90;
     }
   }
 
