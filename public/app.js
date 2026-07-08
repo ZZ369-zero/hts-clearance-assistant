@@ -13,7 +13,7 @@ const state = {
   cottonAssessment: null,
   transportMode: "ocean",
   clearanceMode: "t01",
-  lastQuery: "coffee maker",
+  lastQuery: "",
   lastChapter: "01",
   chapters: []
 };
@@ -42,6 +42,7 @@ const els = {
   chapterTab: document.querySelector("#chapterTab"),
   searchForm: document.querySelector("#searchForm"),
   queryInput: document.querySelector("#queryInput"),
+  quickQueries: document.querySelector("#quickQueries"),
   chapterTools: document.querySelector("#chapterTools"),
   chapterSelect: document.querySelector("#chapterSelect"),
   loadChapter: document.querySelector("#loadChapter"),
@@ -110,6 +111,9 @@ const staticRuntime = {
   cache: new Map()
 };
 
+const searchHistoryStorageKey = "hts-clearance-search-history";
+const searchHistoryLimit = 8;
+
 const transportConfig = {
   ocean: {
     title: "海运 Ocean",
@@ -177,11 +181,12 @@ init();
 
 async function init() {
   bindEvents();
+  renderSearchHistory();
   setTransportMode(state.transportMode);
   setClearanceMode(state.clearanceMode);
   await Promise.all([loadStatus(), loadChapters(), loadSyncStatus()]);
   setInterval(loadSyncStatus, 60 * 1000);
-  await search("coffee maker");
+  showSearchPrompt();
   calculate();
 }
 
@@ -191,13 +196,22 @@ function bindEvents() {
     search(els.queryInput.value.trim(), true);
   });
 
-  document.querySelectorAll("[data-query]").forEach((button) => {
-    button.addEventListener("click", () => {
-      const query = button.dataset.query;
+  els.quickQueries.addEventListener("click", (event) => {
+    const deleteButton = event.target.closest("[data-history-delete]");
+    if (deleteButton) {
+      event.preventDefault();
+      event.stopPropagation();
+      removeSearchHistory(deleteButton.dataset.historyDelete);
+      return;
+    }
+
+    const queryButton = event.target.closest("[data-history-query]");
+    if (queryButton) {
+      const query = queryButton.dataset.historyQuery;
       els.queryInput.value = query;
       setMode("search");
       search(query, true);
-    });
+    }
   });
 
   els.searchTab.addEventListener("click", () => setMode("search"));
@@ -400,9 +414,72 @@ async function loadChapters() {
   els.chapterSelect.value = state.lastChapter;
 }
 
+function getSearchHistory() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(searchHistoryStorageKey) || "[]");
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+    const seen = new Set();
+    return parsed
+      .map((item) => String(item || "").trim())
+      .filter((item) => {
+        const key = item.toLowerCase();
+        if (!item || seen.has(key)) {
+          return false;
+        }
+        seen.add(key);
+        return true;
+      })
+      .slice(0, searchHistoryLimit);
+  } catch {
+    return [];
+  }
+}
+
+function setSearchHistory(history) {
+  try {
+    localStorage.setItem(searchHistoryStorageKey, JSON.stringify(history.slice(0, searchHistoryLimit)));
+  } catch {
+    // localStorage can be unavailable in private or restricted browsing modes.
+  }
+}
+
+function saveSearchHistory(query) {
+  const cleaned = String(query || "").trim();
+  if (!cleaned) {
+    return;
+  }
+  const next = [
+    cleaned,
+    ...getSearchHistory().filter((item) => item.toLowerCase() !== cleaned.toLowerCase())
+  ].slice(0, searchHistoryLimit);
+  setSearchHistory(next);
+}
+
+function removeSearchHistory(query) {
+  const cleaned = String(query || "").trim();
+  const next = getSearchHistory().filter((item) => item !== cleaned);
+  setSearchHistory(next);
+  renderSearchHistory();
+}
+
+function renderSearchHistory() {
+  const history = getSearchHistory();
+  els.quickQueries.classList.toggle("hidden", history.length === 0);
+  els.quickQueries.innerHTML = history
+    .map((query) => `
+      <span class="quick-query-item">
+        <button class="quick-query-button" type="button" data-history-query="${escapeHtml(query)}">${escapeHtml(query)}</button>
+        <button class="quick-query-delete" type="button" data-history-delete="${escapeHtml(query)}" aria-label="删除 ${escapeHtml(query)}">&times;</button>
+      </span>
+    `)
+    .join("");
+}
+
 async function search(query, force = false) {
   if (!query || ([...query].length < 2 && !/[\u3400-\u9fff]/.test(query))) {
-    showMessage("请输入至少 2 个字符");
+    showSearchPrompt("请输入至少 2 个字符，或输入中文品名 / HTS CODE。");
     return;
   }
 
@@ -417,6 +494,8 @@ async function search(query, force = false) {
     state.rows = data.value || [];
     state.visibleRows = state.rows;
     state.dataKind = "search";
+    saveSearchHistory(query);
+    renderSearchHistory();
     els.resultTitle.textContent = data.translated ? `查询结果：${data.originalQuery} → ${data.query}` : `查询结果：${query}`;
     renderRows(state.visibleRows);
     selectFirstSelectable();
@@ -2000,6 +2079,17 @@ async function loadStaticData(file, force = false) {
 
 function setLoading(isLoading) {
   document.body.classList.toggle("loading", isLoading);
+}
+
+function showSearchPrompt(message = "请输入品名或 HTS CODE 查询。") {
+  state.rows = [];
+  state.visibleRows = [];
+  state.selected = null;
+  els.resultTitle.textContent = "商品查询";
+  els.resultCount.textContent = "";
+  els.resultsBody.innerHTML = "";
+  els.emptyState.textContent = message;
+  els.emptyState.classList.remove("hidden");
 }
 
 function showMessage(message) {

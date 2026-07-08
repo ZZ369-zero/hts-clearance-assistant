@@ -156,14 +156,10 @@
             <form id="searchForm" class="search-form">
               <label for="queryInput">品名 / HTS CODE</label>
               <div class="search-row">
-                <input id="queryInput" name="query" type="search" value="coffee maker" autocomplete="off" />
+                <input id="queryInput" name="query" type="search" value="" autocomplete="off" placeholder="输入品名或 HTS CODE" />
                 <button class="primary-button" type="submit">查询</button>
               </div>
-              <div class="quick-queries" aria-label="快捷查询">
-                <button type="button" data-query="coffee maker">coffee maker</button>
-                <button type="button" data-query="鞋">鞋</button>
-                <button type="button" data-query="8516.71.00">8516.71.00</button>
-              </div>
+              <div id="quickQueries" class="quick-queries hidden" aria-label="本机搜索记录"></div>
             </form>
 
             <div id="chapterTools" class="chapter-tools hidden">

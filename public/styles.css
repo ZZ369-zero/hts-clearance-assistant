@@ -479,17 +479,50 @@ button:focus-visible {
 .quick-queries {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 8px;
   margin-top: 10px;
 }
 
-.quick-queries button {
+.quick-query-item {
+  display: inline-flex;
+  align-items: center;
   min-height: 32px;
   border: 1px solid #bed1df;
   border-radius: 999px;
-  padding: 5px 10px;
-  color: var(--navy);
   background: var(--soft-blue);
+  overflow: hidden;
+}
+
+.quick-query-button,
+.quick-query-delete {
+  min-height: 32px;
+  border: 0;
+  color: var(--navy);
+  background: transparent;
+}
+
+.quick-query-button {
+  padding: 5px 9px 5px 10px;
+}
+
+.quick-query-delete {
+  width: 28px;
+  border-left: 1px solid rgba(127, 160, 184, 0.42);
+  padding: 0;
+  font-size: 17px;
+  line-height: 1;
+}
+
+.quick-query-button:hover,
+.quick-query-button:focus-visible {
+  background: #dcecf8;
+}
+
+.quick-query-delete:hover,
+.quick-query-delete:focus-visible {
+  color: #b42318;
+  background: #ffe7e4;
 }
 
 .chapter-tools {
