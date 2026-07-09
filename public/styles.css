@@ -243,6 +243,11 @@ main {
   padding: 16px;
 }
 
+.sync-center.collapsed {
+  gap: 0;
+  padding: 12px 16px;
+}
+
 .sync-heading {
   display: flex;
   align-items: center;
@@ -269,6 +274,19 @@ main {
   color: var(--muted);
   font-size: 13px;
   font-weight: 800;
+}
+
+.sync-center.collapsed .sync-heading h2 {
+  font-size: 18px;
+}
+
+.sync-center.collapsed #syncRefreshAll,
+.sync-center.collapsed .sync-source-list {
+  display: none;
+}
+
+.sync-toggle {
+  min-width: 92px;
 }
 
 .secondary-button {

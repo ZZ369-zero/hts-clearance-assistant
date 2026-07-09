@@ -130,7 +130,7 @@
           <ul id="modeChecklist" class="mode-checklist"></ul>
         </section>
 
-        <section class="sync-center tool-panel" aria-label="数据同步中心">
+        <section id="syncCenter" class="sync-center tool-panel collapsed" aria-label="数据同步中心">
           <div class="sync-heading">
             <div>
               <p class="eyebrow">DATA SYNC</p>
@@ -138,6 +138,15 @@
             </div>
             <div class="sync-actions">
               <span id="syncAutoStatus">自动更新：读取中</span>
+              <button
+                id="syncToggle"
+                class="secondary-button sync-toggle"
+                type="button"
+                aria-expanded="false"
+                aria-controls="syncSourceList"
+              >
+                展开详情
+              </button>
               <button id="syncRefreshAll" class="secondary-button" type="button">全部刷新</button>
             </div>
           </div>

@@ -24,6 +24,7 @@ const state = {
   manualAssessments: {},
   transportMode: "ocean",
   clearanceMode: "t01",
+  syncExpanded: false,
   lastQuery: "",
   lastChapter: "01",
   chapters: []
@@ -33,7 +34,9 @@ const els = {
   releaseBadge: document.querySelector("#releaseBadge"),
   syncTime: document.querySelector("#syncTime"),
   refreshData: document.querySelector("#refreshData"),
+  syncCenter: document.querySelector("#syncCenter"),
   syncAutoStatus: document.querySelector("#syncAutoStatus"),
+  syncToggle: document.querySelector("#syncToggle"),
   syncRefreshAll: document.querySelector("#syncRefreshAll"),
   syncSourceList: document.querySelector("#syncSourceList"),
   oceanTab: document.querySelector("#oceanTab"),
@@ -224,6 +227,7 @@ const vehiclePartsSection232CodeSet = new Set(vehiclePartsSection232Options.map(
 init();
 
 async function init() {
+  initSyncPanel();
   bindEvents();
   renderSearchHistory();
   setTransportMode(state.transportMode);
@@ -268,6 +272,7 @@ function bindEvents() {
   els.chapterSelect.addEventListener("change", () => loadChapter(els.chapterSelect.value, true));
   els.chapterFilter.addEventListener("input", filterChapterRows);
   els.refreshData.addEventListener("click", refreshData);
+  els.syncToggle.addEventListener("click", () => setSyncExpanded(!state.syncExpanded, { persist: true }));
   els.syncRefreshAll.addEventListener("click", () => refreshSyncSource("all"));
   els.syncSourceList.addEventListener("click", (event) => {
     const button = event.target.closest("[data-sync-source]");
@@ -367,6 +372,23 @@ function setMode(mode) {
 
   if (!isSearch && state.dataKind !== "chapter") {
     loadChapter(state.lastChapter, true);
+  }
+}
+
+function initSyncPanel() {
+  const saved = localStorage.getItem("hts-sync-expanded");
+  setSyncExpanded(saved === "true", { persist: false });
+}
+
+function setSyncExpanded(expanded, options = {}) {
+  state.syncExpanded = Boolean(expanded);
+  els.syncCenter.classList.toggle("collapsed", !state.syncExpanded);
+  els.syncToggle.textContent = state.syncExpanded ? "收起详情" : "展开详情";
+  els.syncToggle.setAttribute("aria-expanded", String(state.syncExpanded));
+  els.syncSourceList.setAttribute("aria-hidden", String(!state.syncExpanded));
+
+  if (options.persist) {
+    localStorage.setItem("hts-sync-expanded", String(state.syncExpanded));
   }
 }
 
