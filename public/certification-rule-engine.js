@@ -32,6 +32,10 @@ export function matchCertificationRules(row) {
       return match ? { ...item, ...match } : null;
     })
     .filter(Boolean)
+    .filter((item, index, matches) => {
+      const suppressedIds = new Set(matches.flatMap((match) => match.suppresses || []));
+      return !suppressedIds.has(item.id);
+    })
     .sort((a, b) => (a.sequence || 999) - (b.sequence || 999));
 }
 
@@ -63,27 +67,35 @@ export function summarizeCertificationMatches(matches = []) {
 
 function matchCertificationItem(item, htsDigits, haystack) {
   const rule = item.rule || {};
+  const exactMatches = (rule.exactCodes || [])
+    .map((code) => normalizeHtsDigits(code))
+    .filter((code) => code && htsDigits === code);
   const prefixMatches = (rule.prefixes || [])
     .map((prefix) => normalizeHtsDigits(prefix))
     .filter((prefix) => prefix && htsDigits.startsWith(prefix));
   const keywordMatches = (rule.keywords || [])
     .filter((keyword) => matchesKeyword(haystack, keyword));
 
+  const needsExact = Boolean(rule.exactCodes?.length);
   const needsPrefix = Boolean(rule.prefixes?.length);
   const needsKeyword = Boolean(rule.keywords?.length);
+  const hasExact = exactMatches.length > 0;
   const hasPrefix = prefixMatches.length > 0;
   const hasKeyword = keywordMatches.length > 0;
   const mode = rule.mode || "any";
 
-  if (mode === "all" && (!(!needsPrefix || hasPrefix) || !(!needsKeyword || hasKeyword))) {
+  if (mode === "all" && (!(!needsExact || hasExact) || !(!needsPrefix || hasPrefix) || !(!needsKeyword || hasKeyword))) {
     return null;
   }
-  if (mode !== "all" && !hasPrefix && !hasKeyword) {
+  if (mode !== "all" && !hasExact && !hasPrefix && !hasKeyword) {
     return null;
   }
 
   const reasons = [];
-  if (hasPrefix) {
+  if (hasExact) {
+    reasons.push(`HTS ${formatMatchedPrefixes(exactMatches)}`);
+  }
+  if (hasPrefix && !hasExact) {
     reasons.push(`HTS ${formatMatchedPrefixes(prefixMatches)}`);
   }
   if (hasKeyword) {
@@ -92,6 +104,7 @@ function matchCertificationItem(item, htsDigits, haystack) {
 
   return {
     matchedBy: reasons.join("；"),
+    matchedExactCodes: exactMatches,
     matchedPrefixes: prefixMatches,
     matchedKeywords: keywordMatches
   };

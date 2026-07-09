@@ -18,7 +18,7 @@ export const certificationCatalog = [
   },
   {
     id: "fda-food-cosmetic-medical",
-    sequence: 2,
+    sequence: 5,
     agency: "FDA",
     nameZh: "FDA 监管提示",
     nameEn: "FDA Regulated Product",
@@ -41,8 +41,64 @@ export const certificationCatalog = [
     sourceUrl: "https://www.fda.gov/industry/import-program-tools/product-codes-and-product-code-builder"
   },
   {
-    id: "fda-tobacco",
+    id: "fda-prior-notice-fd4",
+    sequence: 2,
+    agency: "FDA / CBP",
+    nameZh: "FD4 FDA Prior Notice（食品入关前通知）",
+    nameEn: "FDA Prior Notice for Imported Food",
+    category: "pga",
+    status: "high",
+    suppresses: ["fda-food-cosmetic-medical"],
+    rule: {
+      mode: "any",
+      exactCodes: ["1905909090"],
+      prefixes: ["19059090"]
+    },
+    summary: "FD4 表示该 HTS 对应食品产品，入境申报通常需要提交 FDA Prior Notice（PN）和 FDA entry information。",
+    explanation: "Prior Notice 不是产品认证证书，而是食品进口入关前通知/申报数据。FDA 说明，人用或动物食品进口或拟进口到美国时通常必须提供 Prior Notice，可通过 CBP ACE/ABI 随报关提交，或通过 FDA PNSI 提交；最终仍需核对用途、成分和豁免情形。",
+    sourceName: "FDA Harmonized Tariff Schedule and FD Flags",
+    sourceUrl: "https://www.fda.gov/industry/import-basics/harmonized-tariff-schedule-and-fd-flags"
+  },
+  {
+    id: "ams-organic-am7",
     sequence: 3,
+    agency: "USDA / AMS",
+    nameZh: "AM7 USDA AMS Organic（有机产品数据）",
+    nameEn: "USDA AMS Organic Program Data",
+    category: "pga",
+    status: "need_input",
+    rule: {
+      mode: "any",
+      exactCodes: ["1905909090"],
+      prefixes: ["19059090"],
+      keywords: ["organic", "有机"]
+    },
+    summary: "AM7 表示 USDA/AMS 有机项目数据可能需要。若商品以 USDA Organic/有机产品进口，通常需关联 NOP Import Certificate。",
+    explanation: "该提示取决于商品是否作为认证有机产品销售或申报。USDA AMS 说明，进口到美国的有机农产品货件需关联电子 NOP Import Certificate；非有机用途通常需由报关行按实际情况判断是否可 disclaim。",
+    sourceName: "USDA AMS Electronic Organic Import Certificates",
+    sourceUrl: "https://www.ams.usda.gov/services/organic-certification/international-trade/Electronic-Organic-Import-Certificates"
+  },
+  {
+    id: "aphis-core-aq1",
+    sequence: 4,
+    agency: "USDA / APHIS",
+    nameZh: "AQ1 APHIS Core（动植物卫生检疫数据）",
+    nameEn: "APHIS Core Data May Be Required",
+    category: "pga",
+    status: "need_input",
+    rule: {
+      mode: "any",
+      exactCodes: ["1905909090"],
+      prefixes: ["19059090"]
+    },
+    summary: "AQ1 表示 APHIS data may be required，需要判断是否涉及 APHIS 许可、证书或其他 LPCO 文件。",
+    explanation: "APHIS 说明，AQ1 是“数据可能需要”的标志；如果该商品入境适用 permit、certificate 或其他 LPCO，则需提交 APHIS Core Message Set。若不需要 LPCO，通常可按 APHIS 指引由报关行 disclaim，但 CBP Agriculture 仍可要求文件或查验。",
+    sourceName: "APHIS Core Message Set Questions and Answers",
+    sourceUrl: "https://www.aphis.usda.gov/ace/aphis-core-message-set-questions-answers"
+  },
+  {
+    id: "fda-tobacco",
+    sequence: 6,
     agency: "FDA",
     nameZh: "FDA Tobacco（烟草/尼古丁产品）",
     nameEn: "FDA Tobacco Products",
@@ -60,7 +116,7 @@ export const certificationCatalog = [
   },
   {
     id: "cpsc-cpc-toys",
-    sequence: 4,
+    sequence: 7,
     agency: "CPSC",
     nameZh: "CPC 儿童产品证书",
     nameEn: "Children's Product Certificate",
@@ -78,7 +134,7 @@ export const certificationCatalog = [
   },
   {
     id: "cpsc-child-apparel",
-    sequence: 5,
+    sequence: 8,
     agency: "CPSC",
     nameZh: "CPSC 儿童服装/儿童纺织品",
     nameEn: "CPSC Children's Apparel",
@@ -96,7 +152,7 @@ export const certificationCatalog = [
   },
   {
     id: "fcc-rf-device",
-    sequence: 6,
+    sequence: 9,
     agency: "FCC",
     nameZh: "FCC 设备授权",
     nameEn: "FCC Equipment Authorization",
@@ -117,7 +173,7 @@ export const certificationCatalog = [
   },
   {
     id: "epa-tsca-chemical",
-    sequence: 7,
+    sequence: 10,
     agency: "EPA",
     nameZh: "EPA TSCA 化学品进口声明",
     nameEn: "EPA TSCA Import Certification",
@@ -135,7 +191,7 @@ export const certificationCatalog = [
   },
   {
     id: "epa-pesticide-noa",
-    sequence: 8,
+    sequence: 11,
     agency: "EPA",
     nameZh: "EPA 农药/杀虫剂 Notice of Arrival",
     nameEn: "EPA Notice of Arrival for Pesticides",
@@ -153,7 +209,7 @@ export const certificationCatalog = [
   },
   {
     id: "epa-vehicle-engine",
-    sequence: 9,
+    sequence: 12,
     agency: "EPA",
     nameZh: "EPA 车辆/发动机排放合规",
     nameEn: "EPA Vehicles and Engines Import Requirements",
@@ -171,7 +227,7 @@ export const certificationCatalog = [
   },
   {
     id: "dot-nhtsa-vehicle",
-    sequence: 10,
+    sequence: 13,
     agency: "DOT / NHTSA",
     nameZh: "DOT/NHTSA 车辆及设备合规",
     nameEn: "DOT / NHTSA Vehicle and Equipment Requirements",
@@ -189,7 +245,7 @@ export const certificationCatalog = [
   },
   {
     id: "ftc-textile-labeling",
-    sequence: 11,
+    sequence: 14,
     agency: "FTC",
     nameZh: "服装/纺织品标签要求",
     nameEn: "Textile and Apparel Labeling",
@@ -207,7 +263,7 @@ export const certificationCatalog = [
   },
   {
     id: "aphis-lacey-wood",
-    sequence: 12,
+    sequence: 15,
     agency: "APHIS",
     nameZh: "Lacey Act 木制品/植物产品申报",
     nameEn: "Lacey Act Declaration",
