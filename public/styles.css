@@ -769,6 +769,32 @@ tbody tr.selected td:first-child {
   background: var(--green);
 }
 
+.customs-card-title.compliance {
+  justify-content: space-between;
+  color: #263d70;
+  background: #f0f4fb;
+}
+
+.customs-card-title.compliance::before {
+  background: #4d6fb8;
+}
+
+.customs-card-title.compliance span {
+  min-width: 0;
+}
+
+.customs-card-title.compliance strong {
+  margin-left: auto;
+  border: 1px solid #c8d4ea;
+  border-radius: 999px;
+  padding: 2px 8px;
+  color: #263d70;
+  background: #ffffff;
+  font-size: 12px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
 .hs-code-row,
 .customs-tax-row {
   display: flex;
@@ -1076,6 +1102,115 @@ tbody tr.selected td:first-child {
   border-radius: 8px;
   padding: 10px;
   background: #fbfdff;
+}
+
+.certification-card {
+  margin-top: 12px;
+}
+
+.certification-list {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px 12px;
+}
+
+.certification-item {
+  border: 1px solid #dce5ec;
+  border-left-width: 4px;
+  border-radius: 8px;
+  background: #fbfdff;
+  overflow: hidden;
+}
+
+.certification-item.status-high {
+  border-left-color: #b42318;
+}
+
+.certification-item.status-review {
+  border-left-color: #b7791f;
+}
+
+.certification-item.status-need-input {
+  border-left-color: #4d6fb8;
+}
+
+.certification-item summary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.certification-item summary::-webkit-details-marker {
+  display: none;
+}
+
+.certification-item summary strong {
+  color: var(--navy);
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.certification-item summary small {
+  display: block;
+  margin-top: 2px;
+  color: #5f6b76;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.certification-item summary em {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  border-radius: 999px;
+  padding: 2px 8px;
+  color: #263d70;
+  background: #e8eef9;
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.certification-item.status-high summary em {
+  color: #8a1f13;
+  background: #fde8e4;
+}
+
+.certification-item.status-review summary em {
+  color: #68400b;
+  background: #fff1d5;
+}
+
+.certification-detail {
+  display: grid;
+  gap: 7px;
+  border-top: 1px solid #dce5ec;
+  padding: 9px 10px 10px;
+}
+
+.certification-detail p {
+  margin: 0;
+  color: #344554;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.certification-detail small {
+  color: #5f6b76;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.certification-detail a {
+  color: var(--blue);
+  font-size: 12px;
+  font-weight: 900;
+  text-decoration: none;
 }
 
 dt {

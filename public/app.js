@@ -6,6 +6,11 @@ import {
   isManualAssessmentMatch,
   matchFeeRules
 } from "./fee-rule-engine.js";
+import {
+  getCertificationStatusMeta,
+  matchCertificationRules,
+  summarizeCertificationMatches
+} from "./certification-rule-engine.js";
 
 const state = {
   mode: "search",
@@ -21,6 +26,7 @@ const state = {
   baseRateMessage: "",
   cottonAssessment: null,
   feeMatches: [],
+  certificationMatches: [],
   manualAssessments: {},
   transportMode: "ocean",
   clearanceMode: "t01",
@@ -78,6 +84,9 @@ const els = {
   detailOther: document.querySelector("#detailOther"),
   detailUnits: document.querySelector("#detailUnits"),
   additionalDutyList: document.querySelector("#additionalDutyList"),
+  certificationPanel: document.querySelector("#certificationPanel"),
+  certificationSummary: document.querySelector("#certificationSummary"),
+  certificationList: document.querySelector("#certificationList"),
   detailNotes: document.querySelector("#detailNotes"),
   customsValue: document.querySelector("#customsValue"),
   generalRate: document.querySelector("#generalRate"),
@@ -1023,6 +1032,7 @@ function renderDetail(row) {
     state.additionalDutyBreakdown = [];
     state.compoundGeneralDuty = null;
     state.feeMatches = [];
+    state.certificationMatches = [];
     state.manualAssessments = {};
     renderCompoundDutyPanel(null);
     renderFeeRulePanels();
@@ -1042,6 +1052,7 @@ function renderDetail(row) {
     els.detailOther.textContent = "--";
     els.detailUnits.textContent = "--";
     els.additionalDutyList.textContent = "未选择商品";
+    renderCertificationPanel(null);
     els.detailNotes.innerHTML = "";
     return;
   }
@@ -1064,6 +1075,8 @@ function renderDetail(row) {
   els.detailSpecial.textContent = formatRateDisplay(row.special) || "--";
   els.detailOther.textContent = formatRateDisplay(row.other) || "--";
   els.detailUnits.textContent = row.units?.length ? row.units.join(", ") : "--";
+  state.certificationMatches = matchCertificationRules(row);
+  renderCertificationPanel(row);
 
   const notes = [];
   if (row.additionalDuties) {
@@ -1080,6 +1093,38 @@ function renderDetail(row) {
   }
 
   els.detailNotes.innerHTML = notes.map((note) => `<div class="note">${escapeHtml(note)}</div>`).join("");
+}
+
+function renderCertificationPanel(row) {
+  if (!els.certificationPanel || !els.certificationSummary || !els.certificationList) {
+    return;
+  }
+
+  const matches = row ? state.certificationMatches || [] : [];
+  els.certificationPanel.classList.toggle("hidden", !row || matches.length === 0);
+  els.certificationSummary.textContent = summarizeCertificationMatches(matches);
+  els.certificationList.innerHTML = matches.map(renderCertificationItem).join("");
+}
+
+function renderCertificationItem(match) {
+  const meta = getCertificationStatusMeta(match.status);
+  return `
+    <details class="certification-item ${escapeHtml(meta.className)}">
+      <summary>
+        <span>
+          <strong>${escapeHtml(match.sequence)}. ${escapeHtml(match.nameZh)}</strong>
+          <small>${escapeHtml(match.agency)} · ${escapeHtml(match.nameEn)}</small>
+        </span>
+        <em>${escapeHtml(meta.label)}</em>
+      </summary>
+      <div class="certification-detail">
+        <p>${escapeHtml(match.summary)}</p>
+        <p>${escapeHtml(match.explanation)}</p>
+        <small>命中依据：${escapeHtml(match.matchedBy || "HTS/关键词规则")}</small>
+        <a href="${escapeHtml(match.sourceUrl)}" target="_blank" rel="noopener noreferrer">官方来源：${escapeHtml(match.sourceName)}</a>
+      </div>
+    </details>
+  `;
 }
 
 async function loadAdditionalDuties(row) {
