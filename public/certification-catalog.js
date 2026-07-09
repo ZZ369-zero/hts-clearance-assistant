@@ -18,9 +18,9 @@ export const certificationCatalog = [
   },
   {
     id: "fda-food-cosmetic-medical",
-    sequence: 5,
+    sequence: 12,
     agency: "FDA",
-    nameZh: "FDA 监管提示",
+    nameZh: "FDA 其他监管提示",
     nameEn: "FDA Regulated Product",
     category: "pga",
     status: "review",
@@ -36,7 +36,7 @@ export const certificationCatalog = [
       ]
     },
     summary: "食品、化妆品、药品、医疗器械、辐射产品等可能触发 FDA 监管和 Product Code 要求。",
-    explanation: "FDA 监管通常不能只靠 HTS 最终确认，还需要产品用途、标签、成分、加工方式、预期使用人群等信息，并据此选择 FDA Product Code。",
+    explanation: "这是 FDA 兜底提示。若已命中 FD4、药品、医疗器械、化妆品、辐射产品等更具体规则，页面会优先展示具体类型；最终仍需结合产品用途、标签、成分、加工方式、预期使用人群等信息确认 FDA Product Code。",
     sourceName: "FDA Product Codes and Product Code Builder",
     sourceUrl: "https://www.fda.gov/industry/import-program-tools/product-codes-and-product-code-builder"
   },
@@ -98,7 +98,7 @@ export const certificationCatalog = [
   },
   {
     id: "fda-tobacco",
-    sequence: 6,
+    sequence: 11,
     agency: "FDA",
     nameZh: "FDA Tobacco（烟草/尼古丁产品）",
     nameEn: "FDA Tobacco Products",
@@ -115,8 +115,122 @@ export const certificationCatalog = [
     sourceUrl: "https://www.fda.gov/industry/import-program-tools/product-codes-and-product-code-builder"
   },
   {
-    id: "cpsc-cpc-toys",
+    id: "fda-biologics-fd1-fd2",
+    sequence: 5,
+    agency: "FDA",
+    nameZh: "FDA Biologics（生物制品入境数据 FD1/FD2）",
+    nameEn: "FDA Biologics Entry Data",
+    category: "pga",
+    status: "review",
+    suppresses: ["fda-food-cosmetic-medical"],
+    rule: {
+      mode: "any",
+      prefixes: ["3002"],
+      keywords: ["biologic", "vaccine", "blood", "serum", "plasma", "生物制品", "疫苗", "血液", "血清", "血浆"]
+    },
+    summary: "生物制品、疫苗、血液制品等可能触发 FDA BIO 项目入境数据要求，对应 CBP/FDA FD1 或 FD2 的 801(a) 数据逻辑。",
+    explanation: "CBP ACE tariff flag 定义中，FD1 表示 FDA data may be required 801(a)，FD2 表示 FDA data required 801(a)，项目代码包含 BIO。该提示为产品类型层面的预警；具体 required/may be required 和 FDA Product Code 需按 HTS flag、产品用途与成分确认。",
+    sourceName: "FDA Harmonized Tariff Schedule and FD Flags",
+    sourceUrl: "https://www.fda.gov/industry/import-basics/harmonized-tariff-schedule-and-fd-flags"
+  },
+  {
+    id: "fda-drug-fd1-fd2",
+    sequence: 6,
+    agency: "FDA",
+    nameZh: "FDA Drug（药品入境数据 FD1/FD2）",
+    nameEn: "FDA Drug Entry Data",
+    category: "pga",
+    status: "review",
+    suppresses: ["fda-food-cosmetic-medical"],
+    rule: {
+      mode: "any",
+      prefixes: ["3003", "3004", "3005", "3006"],
+      keywords: ["drug", "medicine", "medicament", "pharmaceutical", "药品", "药物", "医药", "制剂"]
+    },
+    summary: "药品、医药制剂、部分医疗敷料等可能触发 FDA DRU 项目入境数据要求，对应 CBP/FDA FD1 或 FD2 的 801(a) 数据逻辑。",
+    explanation: "CBP ACE tariff flag 定义中，FD1 表示 FDA data may be required 801(a)，FD2 表示 FDA data required 801(a)，项目代码包含 DRU。实际申报通常需要 FDA Product Code、制造商/发货方等 entry information；是否 required 需以 HTS flag 和产品属性确认。",
+    sourceName: "FDA Harmonized Tariff Schedule and FD Flags",
+    sourceUrl: "https://www.fda.gov/industry/import-basics/harmonized-tariff-schedule-and-fd-flags"
+  },
+  {
+    id: "fda-cosmetic-fd1-fd2",
     sequence: 7,
+    agency: "FDA",
+    nameZh: "FDA Cosmetic（化妆品入境数据 FD1/FD2）",
+    nameEn: "FDA Cosmetic Entry Data",
+    category: "pga",
+    status: "review",
+    suppresses: ["fda-food-cosmetic-medical"],
+    rule: {
+      mode: "any",
+      prefixes: ["3303", "3304", "3305", "3306", "3307"],
+      keywords: ["cosmetic", "skin care", "makeup", "perfume", "shampoo", "toothpaste", "化妆品", "护肤", "彩妆", "香水", "洗发", "牙膏"]
+    },
+    summary: "化妆品、护肤品、香水、牙膏等可能触发 FDA COS 项目入境数据要求，对应 CBP/FDA FD1 或 FD2 的 801(a) 数据逻辑。",
+    explanation: "CBP ACE tariff flag 定义中，FD1/FD2 项目代码包含 COS。化妆品是否按 FDA 申报，还需结合产品用途、宣称、成分和标签判断；若含药品用途宣称，可能从化妆品转为药品/OTC 药品监管。",
+    sourceName: "FDA Harmonized Tariff Schedule and FD Flags",
+    sourceUrl: "https://www.fda.gov/industry/import-basics/harmonized-tariff-schedule-and-fd-flags"
+  },
+  {
+    id: "fda-device-fd1-fd2",
+    sequence: 8,
+    agency: "FDA",
+    nameZh: "FDA Medical Device（医疗器械入境数据 FD1/FD2）",
+    nameEn: "FDA Medical Device Entry Data",
+    category: "pga",
+    status: "review",
+    suppresses: ["fda-food-cosmetic-medical"],
+    rule: {
+      mode: "any",
+      prefixes: ["9018", "9019", "9020", "9021", "9022"],
+      keywords: ["medical device", "diagnostic", "surgical", "dental", "x-ray", "医疗器械", "诊断", "手术", "牙科", "X射线"]
+    },
+    summary: "医疗、诊断、牙科、手术器械及相关设备可能触发 FDA DEV 项目入境数据要求，对应 CBP/FDA FD1 或 FD2 的 801(a) 数据逻辑。",
+    explanation: "CBP ACE tariff flag 定义中，FD1/FD2 项目代码包含 DEV。实际是否需要 FDA device entry information、注册/列名、510(k) 或其他上市状态信息，需按设备用途、分类和 FDA Product Code 确认。",
+    sourceName: "FDA Harmonized Tariff Schedule and FD Flags",
+    sourceUrl: "https://www.fda.gov/industry/import-basics/harmonized-tariff-schedule-and-fd-flags"
+  },
+  {
+    id: "fda-radiation-fd1-fd2",
+    sequence: 9,
+    agency: "FDA",
+    nameZh: "FDA Radiation（辐射产品入境数据 FD1/FD2）",
+    nameEn: "FDA Radiation-Emitting Product Entry Data",
+    category: "pga",
+    status: "review",
+    suppresses: ["fda-food-cosmetic-medical"],
+    rule: {
+      mode: "any",
+      prefixes: ["9022"],
+      keywords: ["radiation", "radiation-emitting", "x-ray", "laser", "microwave", "ultrasonic", "辐射", "激光", "微波", "超声", "X射线"]
+    },
+    summary: "X 射线设备、激光、微波、超声等辐射产品可能触发 FDA RAD 项目入境数据要求，对应 CBP/FDA FD1 或 FD2 的 801(a) 数据逻辑。",
+    explanation: "CBP ACE tariff flag 定义中，FD1/FD2 项目代码包含 RAD。辐射产品通常需要结合产品类型、用途、性能标准、进口商/制造商信息及 FDA radiation-emitting product 要求确认。",
+    sourceName: "FDA Harmonized Tariff Schedule and FD Flags",
+    sourceUrl: "https://www.fda.gov/industry/import-basics/harmonized-tariff-schedule-and-fd-flags"
+  },
+  {
+    id: "fda-veterinary-vme-fd1-fd2",
+    sequence: 10,
+    agency: "FDA",
+    nameZh: "FDA Veterinary / Animal Food（兽药/动物食品入境数据 FD1/FD2）",
+    nameEn: "FDA Veterinary Medicine or Animal Food Entry Data",
+    category: "pga",
+    status: "review",
+    suppresses: ["fda-food-cosmetic-medical"],
+    rule: {
+      mode: "any",
+      prefixes: ["2309"],
+      keywords: ["animal feed", "pet food", "veterinary", "veterinary medicine", "饲料", "宠物食品", "兽药", "动物食品"]
+    },
+    summary: "动物食品、宠物食品、兽药等可能触发 FDA FOO/VME 项目入境数据要求，对应 CBP/FDA FD1、FD2 或食品 Prior Notice 逻辑。",
+    explanation: "CBP ACE tariff flag 定义中，FDA 项目代码包含 FOO 和 VME。动物食品可能涉及 Prior Notice；兽药/动物用医疗产品可能按 VME 或 DRU 申报。需按用途、标签、成分和 FDA Product Code 确认。",
+    sourceName: "FDA Harmonized Tariff Schedule and FD Flags",
+    sourceUrl: "https://www.fda.gov/industry/import-basics/harmonized-tariff-schedule-and-fd-flags"
+  },
+  {
+    id: "cpsc-cpc-toys",
+    sequence: 13,
     agency: "CPSC",
     nameZh: "CPC 儿童产品证书",
     nameEn: "Children's Product Certificate",
@@ -134,7 +248,7 @@ export const certificationCatalog = [
   },
   {
     id: "cpsc-child-apparel",
-    sequence: 8,
+    sequence: 14,
     agency: "CPSC",
     nameZh: "CPSC 儿童服装/儿童纺织品",
     nameEn: "CPSC Children's Apparel",
@@ -152,7 +266,7 @@ export const certificationCatalog = [
   },
   {
     id: "fcc-rf-device",
-    sequence: 9,
+    sequence: 15,
     agency: "FCC",
     nameZh: "FCC 设备授权",
     nameEn: "FCC Equipment Authorization",
@@ -173,7 +287,7 @@ export const certificationCatalog = [
   },
   {
     id: "epa-tsca-chemical",
-    sequence: 10,
+    sequence: 16,
     agency: "EPA",
     nameZh: "EPA TSCA 化学品进口声明",
     nameEn: "EPA TSCA Import Certification",
@@ -191,7 +305,7 @@ export const certificationCatalog = [
   },
   {
     id: "epa-pesticide-noa",
-    sequence: 11,
+    sequence: 17,
     agency: "EPA",
     nameZh: "EPA 农药/杀虫剂 Notice of Arrival",
     nameEn: "EPA Notice of Arrival for Pesticides",
@@ -209,7 +323,7 @@ export const certificationCatalog = [
   },
   {
     id: "epa-vehicle-engine",
-    sequence: 12,
+    sequence: 18,
     agency: "EPA",
     nameZh: "EPA 车辆/发动机排放合规",
     nameEn: "EPA Vehicles and Engines Import Requirements",
@@ -227,7 +341,7 @@ export const certificationCatalog = [
   },
   {
     id: "dot-nhtsa-vehicle",
-    sequence: 13,
+    sequence: 19,
     agency: "DOT / NHTSA",
     nameZh: "DOT/NHTSA 车辆及设备合规",
     nameEn: "DOT / NHTSA Vehicle and Equipment Requirements",
@@ -245,7 +359,7 @@ export const certificationCatalog = [
   },
   {
     id: "ftc-textile-labeling",
-    sequence: 14,
+    sequence: 20,
     agency: "FTC",
     nameZh: "服装/纺织品标签要求",
     nameEn: "Textile and Apparel Labeling",
@@ -263,7 +377,7 @@ export const certificationCatalog = [
   },
   {
     id: "aphis-lacey-wood",
-    sequence: 15,
+    sequence: 21,
     agency: "APHIS",
     nameZh: "Lacey Act 木制品/植物产品申报",
     nameEn: "Lacey Act Declaration",
