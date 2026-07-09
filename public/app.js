@@ -10,7 +10,7 @@ import {
   getCertificationStatusMeta,
   matchCertificationRules,
   summarizeCertificationMatches
-} from "./certification-rule-engine.js";
+} from "./certification-rule-engine.js?v=20260709-fda2";
 
 const state = {
   mode: "search",

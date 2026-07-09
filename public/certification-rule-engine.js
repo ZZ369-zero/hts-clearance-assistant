@@ -1,4 +1,4 @@
-import { certificationCatalog } from "./certification-catalog.js";
+import { certificationCatalog } from "./certification-catalog.js?v=20260709-fda2";
 
 const statusMeta = {
   high: {
