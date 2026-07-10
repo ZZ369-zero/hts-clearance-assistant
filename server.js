@@ -24,6 +24,14 @@ const TRANSLATE_API_BASE = "https://api.mymemory.translated.net/get";
 const ADCVD_CSV_PATH = path.resolve(__dirname, "..", "工作流", "中国输美_AD_CVD_HTS_CODE整理_主表.csv");
 const ADCVD_SOURCE_XLSX_PATH = path.resolve(__dirname, "..", "工作流", "中国输美_AD_CVD_HTS_CODE整理_2026-07-06.xlsx");
 
+const adCvdHtsAliasRules = [
+  {
+    source: "3907600030",
+    aliases: ["39076100", "3907610010", "3907610050", "39076900", "3907690010", "3907690050"],
+    note: "PET resin AD/CVD orders use current HTSUS 3907.61.00.00 / 3907.69.00.00; older local data used 3907.60.00.30."
+  }
+];
+
 const vehiclePartsSection232Options = [
   {
     code: "9903.94.05",
@@ -1847,11 +1855,15 @@ async function loadAdCvdOfficialStatus(force = false) {
 
 function normalizeAdCvdRecord(record) {
   const htsCode = cleanValue(record["HTS CODE"]);
+  const htsDigits = normalizeHtsDigits(htsCode);
+  const aliasRule = findAdCvdHtsAliasRule(htsDigits);
   const reason = cleanValue(record["反倾销缘由描述"]);
   const caseNumbers = extractAdCvdCaseNumbers(reason);
   return {
     htsCode,
-    htsDigits: normalizeHtsDigits(htsCode),
+    htsDigits,
+    htsAliases: aliasRule?.aliases || [],
+    htsAliasNote: aliasRule?.note || "",
     category: cleanValue(record["归属类别"]),
     productZh: cleanValue(record["关联的产品名称中文"]),
     productEn: cleanValue(record["关联的产品名称英文"]),
@@ -1872,7 +1884,8 @@ function findAdCvdMatches(hts, data) {
   const matches = [];
   const seen = new Set();
   for (const entry of data.entries || []) {
-    if (!entry.htsDigits || !isAdCvdHtsMatch(normalized, entry.htsDigits)) {
+    const matchedHtsDigits = getBestAdCvdMatchedDigits(normalized, entry);
+    if (!matchedHtsDigits) {
       continue;
     }
 
@@ -1888,8 +1901,10 @@ function findAdCvdMatches(hts, data) {
     seen.add(key);
     matches.push({
       ...entry,
-      matchType: normalized === entry.htsDigits ? "exact" : normalized.startsWith(entry.htsDigits) ? "prefix" : "broader",
-      matchLength: entry.htsDigits.length
+      matchedHts: formatHtsDigits(matchedHtsDigits),
+      matchedHtsDigits,
+      matchType: getAdCvdMatchType(normalized, entry.htsDigits, matchedHtsDigits),
+      matchLength: matchedHtsDigits.length
     });
   }
 
@@ -1898,11 +1913,53 @@ function findAdCvdMatches(hts, data) {
     .slice(0, 10);
 }
 
+function findAdCvdHtsAliasRule(htsDigits) {
+  return adCvdHtsAliasRules.find((rule) => rule.source === htsDigits) || null;
+}
+
+function getAdCvdComparableDigits(entry) {
+  return [
+    entry.htsDigits,
+    ...(entry.htsAliases || [])
+  ].filter(Boolean);
+}
+
+function getBestAdCvdMatchedDigits(inputDigits, entry) {
+  const matches = getAdCvdComparableDigits(entry)
+    .filter((listDigits) => isAdCvdHtsMatch(inputDigits, listDigits))
+    .sort((a, b) => b.length - a.length);
+  return matches[0] || "";
+}
+
+function getAdCvdMatchType(inputDigits, entryDigits, matchedDigits) {
+  if (matchedDigits !== entryDigits) {
+    return inputDigits === matchedDigits ? "alias-exact" : "alias-prefix";
+  }
+  if (inputDigits === entryDigits) {
+    return "exact";
+  }
+  return inputDigits.startsWith(entryDigits) ? "prefix" : "broader";
+}
+
 function isAdCvdHtsMatch(inputDigits, listDigits) {
   if (listDigits.length < 4) {
     return false;
   }
   return inputDigits === listDigits || inputDigits.startsWith(listDigits) || listDigits.startsWith(inputDigits);
+}
+
+function formatHtsDigits(value) {
+  const digits = normalizeHtsDigits(value);
+  if (digits.length === 10) {
+    return `${digits.slice(0, 4)}.${digits.slice(4, 6)}.${digits.slice(6, 8)}.${digits.slice(8)}`;
+  }
+  if (digits.length === 8) {
+    return `${digits.slice(0, 4)}.${digits.slice(4, 6)}.${digits.slice(6, 8)}`;
+  }
+  if (digits.length === 6) {
+    return `${digits.slice(0, 4)}.${digits.slice(4)}`;
+  }
+  return digits;
 }
 
 function extractAdCvdCaseNumbers(value) {

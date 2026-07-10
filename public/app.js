@@ -138,6 +138,14 @@ const staticRuntime = {
   cache: new Map()
 };
 
+const adCvdHtsAliasRules = [
+  {
+    source: "3907600030",
+    aliases: ["39076100", "3907610010", "3907610050", "39076900", "3907690010", "3907690050"],
+    note: "PET resin AD/CVD orders use current HTSUS 3907.61.00.00 / 3907.69.00.00; older local data used 3907.60.00.30."
+  }
+];
+
 const searchHistoryStorageKey = "hts-clearance-search-history";
 const searchHistoryLimit = 8;
 
@@ -1508,8 +1516,12 @@ function renderAdCvdRestrictionItem(match) {
   const types = match.orderTypes?.length ? match.orderTypes.join("/") : "AD/CVD";
   const cases = match.caseNumbers?.length ? match.caseNumbers.join(" / ") : "案号待核";
   const product = [match.productZh, match.productEn].filter(Boolean).join(" / ");
+  const matchedHts = match.matchedHts && match.matchedHts !== match.htsCode
+    ? `${match.htsCode || "--"} → ${match.matchedHts}`
+    : match.htsCode || "--";
   const title = [
     product,
+    match.htsAliasNote,
     match.reason,
     "HTS 仅作清单匹配提示，是否适用以 DOC/CBP scope 及原产国、产品规格为准；税率需按案件现金保证金率另行确认。"
   ].filter(Boolean).join(" ");
@@ -1519,7 +1531,7 @@ function renderAdCvdRestrictionItem(match) {
       <div class="restriction-main">
         <strong>AD/CVD-反倾销反补贴:</strong>
         <em class="material-badge">${escapeHtml(types)}</em>
-        <span>${escapeHtml(match.htsCode || "--")}</span>
+        <span>${escapeHtml(matchedHts)}</span>
         <b>${escapeHtml(cases)}</b>
         <small>${escapeHtml(product || "产品范围需复核")}</small>
       </div>
@@ -2657,12 +2669,20 @@ async function staticAdCvd(hts) {
   const data = await loadStaticData("adcvd.json");
   const normalized = normalizeStaticHtsDigits(hts);
   const matches = (data.entries || [])
-    .filter((entry) => entry.htsDigits && isStaticAdCvdHtsMatch(normalized, entry.htsDigits))
-    .map((entry) => ({
-      ...entry,
-      matchType: normalized === entry.htsDigits ? "exact" : normalized.startsWith(entry.htsDigits) ? "prefix" : "broader",
-      matchLength: entry.htsDigits.length
-    }))
+    .map((entry) => {
+      const normalizedEntry = normalizeStaticAdCvdEntry(entry);
+      const matchedHtsDigits = getBestStaticAdCvdMatchedDigits(normalized, normalizedEntry);
+      return matchedHtsDigits
+        ? {
+            ...normalizedEntry,
+            matchedHts: formatStaticHtsDigits(matchedHtsDigits),
+            matchedHtsDigits,
+            matchType: getStaticAdCvdMatchType(normalized, normalizedEntry.htsDigits, matchedHtsDigits),
+            matchLength: matchedHtsDigits.length
+          }
+        : null;
+    })
+    .filter(Boolean)
     .sort((a, b) => b.matchLength - a.matchLength || String(a.productZh || "").localeCompare(String(b.productZh || ""), "zh-CN"))
     .slice(0, 10);
 
@@ -2679,12 +2699,64 @@ async function staticAdCvd(hts) {
   };
 }
 
+function normalizeStaticAdCvdEntry(entry) {
+  if ((entry.htsAliases || []).length) {
+    return entry;
+  }
+  const rule = adCvdHtsAliasRules.find((item) => item.source === normalizeStaticHtsDigits(entry.htsDigits || entry.htsCode));
+  return rule
+    ? {
+        ...entry,
+        htsAliases: rule.aliases,
+        htsAliasNote: entry.htsAliasNote || rule.note
+      }
+    : entry;
+}
+
+function getStaticAdCvdComparableDigits(entry) {
+  return [
+    entry.htsDigits,
+    ...(entry.htsAliases || [])
+  ].filter(Boolean);
+}
+
+function getBestStaticAdCvdMatchedDigits(inputDigits, entry) {
+  const matches = getStaticAdCvdComparableDigits(entry)
+    .filter((listDigits) => isStaticAdCvdHtsMatch(inputDigits, listDigits))
+    .sort((a, b) => b.length - a.length);
+  return matches[0] || "";
+}
+
+function getStaticAdCvdMatchType(inputDigits, entryDigits, matchedDigits) {
+  if (matchedDigits !== entryDigits) {
+    return inputDigits === matchedDigits ? "alias-exact" : "alias-prefix";
+  }
+  if (inputDigits === entryDigits) {
+    return "exact";
+  }
+  return inputDigits.startsWith(entryDigits) ? "prefix" : "broader";
+}
+
 function isStaticAdCvdHtsMatch(inputDigits, listDigits) {
   return listDigits.length >= 4 && (inputDigits === listDigits || inputDigits.startsWith(listDigits) || listDigits.startsWith(inputDigits));
 }
 
 function normalizeStaticHtsDigits(value) {
   return String(value || "").replace(/\D/g, "");
+}
+
+function formatStaticHtsDigits(value) {
+  const digits = normalizeStaticHtsDigits(value);
+  if (digits.length === 10) {
+    return `${digits.slice(0, 4)}.${digits.slice(4, 6)}.${digits.slice(6, 8)}.${digits.slice(8)}`;
+  }
+  if (digits.length === 8) {
+    return `${digits.slice(0, 4)}.${digits.slice(4, 6)}.${digits.slice(6, 8)}`;
+  }
+  if (digits.length === 6) {
+    return `${digits.slice(0, 4)}.${digits.slice(4)}`;
+  }
+  return digits;
 }
 
 async function loadStaticData(file, force = false) {
