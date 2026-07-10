@@ -11,7 +11,8 @@
     "export:static:section232": "node scripts/export-static-data.js --scope section232",
     "export:static:adcvd": "node scripts/export-static-data.js --scope adcvd",
     "export:static:cotton": "node scripts/export-static-data.js --scope cotton",
-    "export:static:translations": "node scripts/export-static-data.js --scope translations"
+    "export:static:translations": "node scripts/export-static-data.js --scope translations",
+    "check:search-catalog": "node scripts/check-search-catalog-coverage.js"
   },
   "engines": {
     "node": ">=20"

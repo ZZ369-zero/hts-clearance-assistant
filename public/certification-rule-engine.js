@@ -1,4 +1,4 @@
-import { certificationCatalog } from "./certification-catalog.js?v=20260709-fda2";
+import { certificationCatalog } from "./certification-catalog.js?v=20260709-fda5";
 
 const statusMeta = {
   high: {
@@ -18,12 +18,16 @@ const statusMeta = {
   }
 };
 
-export function matchCertificationRules(row) {
+export function matchCertificationRules(row, context = {}) {
   const htsDigits = normalizeHtsDigits(row?.htsno);
+  const contextText = Array.isArray(context)
+    ? context.filter(Boolean).join(" ")
+    : [context?.query, context?.productName, context?.description, context?.notes].filter(Boolean).join(" ");
   const haystack = normalizeCertificationText([
     row?.htsno,
     row?.description,
-    row?.descriptionZh
+    row?.descriptionZh,
+    contextText
   ].filter(Boolean).join(" "));
 
   return certificationCatalog
@@ -119,6 +123,9 @@ function matchesKeyword(haystack, keyword) {
     return haystack.includes(normalized);
   }
   if (/^[a-z0-9]{1,3}$/.test(normalized)) {
+    return new RegExp(`(^|\\s)${escapeRegExp(normalized)}($|\\s)`, "i").test(haystack);
+  }
+  if (/^[a-z0-9][a-z0-9\s']+[a-z0-9]$/.test(normalized)) {
     return new RegExp(`(^|\\s)${escapeRegExp(normalized)}($|\\s)`, "i").test(haystack);
   }
   return haystack.includes(normalized);

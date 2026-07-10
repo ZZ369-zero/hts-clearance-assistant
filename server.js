@@ -138,6 +138,21 @@ const chineseAliases = new Map([
   ["滴剂", "medicaments drops measured doses"],
   ["滴液", "medicaments drops measured doses"],
   ["眼药水", "medicaments primarily affecting the eyes"],
+  ["生物制品", "antisera blood fractions immunological products vaccines cell cultures"],
+  ["生物制剂", "antisera blood fractions immunological products vaccines cell cultures"],
+  ["疫苗", "vaccines"],
+  ["血清", "antisera sera"],
+  ["药品", "medicaments pharmaceutical products"],
+  ["药物", "medicaments pharmaceutical products"],
+  ["医药", "pharmaceutical products"],
+  ["医疗器械", "medical surgical dental veterinary instruments appliances"],
+  ["医疗设备", "medical surgical dental veterinary instruments appliances"],
+  ["X 光/辐射设备", "x-ray apparatus radiation-emitting apparatus"],
+  ["X光/辐射设备", "x-ray apparatus radiation-emitting apparatus"],
+  ["X 光", "x-ray apparatus"],
+  ["X光", "x-ray apparatus"],
+  ["X射线", "x-ray apparatus"],
+  ["辐射设备", "radiation-emitting apparatus"],
   ["棉签", "swab swabs flocked swabs"],
   ["玩具", "toy"],
   ["家具", "furniture"],
@@ -159,7 +174,12 @@ const chineseAliases = new Map([
   ["阀门", "valve"],
   ["轴承", "bearing"],
   ["化妆品", "cosmetic"],
-  ["食品", "food preparation"]
+  ["食品", "food preparation"],
+  ["纸", "paper paperboard"],
+  ["纸张", "paper paperboard"],
+  ["纸板", "paperboard"],
+  ["热敏纸", "thermal paper heat-sensitive paper"],
+  ["收银纸", "thermal paper"]
 ]);
 
 const exactDescriptionTranslations = new Map([
@@ -1783,7 +1803,7 @@ async function searchStaticIndexRowsByPlan(searchPlan) {
   const data = JSON.parse(await readFile(indexPath, "utf8"));
   const rows = buildServerSearchCandidates(data.value || [])
     .map((candidate) => ({ row: candidate.row, score: scoreServerSearchCandidate(candidate, searchPlan.plan) }))
-    .filter((item) => item.score > 0)
+    .filter((item) => item.row.htsno && item.score > 0)
     .sort((a, b) => b.score - a.score || String(a.row.htsno || "").localeCompare(String(b.row.htsno || "")))
     .map((item) => item.row)
     .slice(0, 300);
@@ -1801,7 +1821,7 @@ function buildServerSearchCandidates(rows) {
     const ownText = `${row.description || ""} ${row.descriptionZh || ""}`;
     const parentText = stack.map((item) => item.text).join(" ");
 
-    if (row.htsno) {
+    if (ownText.trim()) {
       stack.push({ indent, text: ownText });
     }
 

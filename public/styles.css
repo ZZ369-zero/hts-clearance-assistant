@@ -1114,6 +1114,16 @@ tbody tr.selected td:first-child {
   padding: 10px 12px 12px;
 }
 
+.certification-empty {
+  border: 1px dashed #c8d4de;
+  border-radius: 8px;
+  padding: 10px;
+  color: #5f6b76;
+  background: #fbfdff;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
 .certification-item {
   border: 1px solid #dce5ec;
   border-left-width: 4px;

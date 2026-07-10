@@ -10,7 +10,7 @@ import {
   getCertificationStatusMeta,
   matchCertificationRules,
   summarizeCertificationMatches
-} from "./certification-rule-engine.js?v=20260709-fda2";
+} from "./certification-rule-engine.js?v=20260709-fda5";
 
 const state = {
   mode: "search",
@@ -1075,7 +1075,7 @@ function renderDetail(row) {
   els.detailSpecial.textContent = formatRateDisplay(row.special) || "--";
   els.detailOther.textContent = formatRateDisplay(row.other) || "--";
   els.detailUnits.textContent = row.units?.length ? row.units.join(", ") : "--";
-  state.certificationMatches = matchCertificationRules(row);
+  state.certificationMatches = matchCertificationRules(row, { query: getCertificationContextQuery() });
   renderCertificationPanel(row);
 
   const notes = [];
@@ -1095,24 +1095,33 @@ function renderDetail(row) {
   els.detailNotes.innerHTML = notes.map((note) => `<div class="note">${escapeHtml(note)}</div>`).join("");
 }
 
+function getCertificationContextQuery() {
+  if (state.dataKind === "search") {
+    return state.lastQuery;
+  }
+  return els.chapterFilter?.value?.trim() || "";
+}
+
 function renderCertificationPanel(row) {
   if (!els.certificationPanel || !els.certificationSummary || !els.certificationList) {
     return;
   }
 
   const matches = row ? state.certificationMatches || [] : [];
-  els.certificationPanel.classList.toggle("hidden", !row || matches.length === 0);
+  els.certificationPanel.classList.toggle("hidden", !row);
   els.certificationSummary.textContent = summarizeCertificationMatches(matches);
-  els.certificationList.innerHTML = matches.map(renderCertificationItem).join("");
+  els.certificationList.innerHTML = matches.length
+    ? matches.map(renderCertificationItem).join("")
+    : `<div class="certification-empty">未命中明显认证/监管提示；仍建议按产品用途、材质、标签宣称和美国进口商要求复核。</div>`;
 }
 
-function renderCertificationItem(match) {
+function renderCertificationItem(match, index) {
   const meta = getCertificationStatusMeta(match.status);
   return `
     <details class="certification-item ${escapeHtml(meta.className)}">
       <summary>
         <span>
-          <strong>${escapeHtml(match.sequence)}. ${escapeHtml(match.nameZh)}</strong>
+          <strong>${escapeHtml(index + 1)}. ${escapeHtml(match.nameZh)}</strong>
           <small>${escapeHtml(match.agency)} · ${escapeHtml(match.nameEn)}</small>
         </span>
         <em>${escapeHtml(meta.label)}</em>
@@ -2181,7 +2190,7 @@ async function staticSearch(query) {
   const plan = buildStaticSearchPlan(originalQuery);
   const rows = buildStaticSearchCandidates(index.value || [])
     .map((candidate) => ({ row: candidate.row, score: scoreStaticSearchRow(candidate, plan) }))
-    .filter((item) => item.score > 0)
+    .filter((item) => item.row.htsno && item.score > 0)
     .sort((a, b) => b.score - a.score || String(a.row.htsno || "").localeCompare(String(b.row.htsno || "")))
     .map((item) => item.row)
     .slice(0, 300);
@@ -2207,7 +2216,7 @@ function buildStaticSearchCandidates(rows) {
     const parentText = stack.map((item) => item.text).join(" ");
     const searchText = `${row.htsno || ""} ${parentText} ${ownText}`;
 
-    if (row.htsno) {
+    if (ownText.trim()) {
       stack.push({ indent, text: ownText });
     }
 
