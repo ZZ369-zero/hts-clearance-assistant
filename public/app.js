@@ -607,6 +607,7 @@ async function loadChapter(chapter, force = false) {
     els.chapterFilter.value = "";
     renderRows(state.visibleRows);
     selectFirstSelectable();
+    enhanceSearchResultTranslations(state.visibleRows);
   } catch (error) {
     showMessage(error.message);
   } finally {
