@@ -12,6 +12,49 @@ import {
   summarizeCertificationMatches
 } from "./certification-rule-engine.js?v=20260709-fda5";
 
+const section122FallbackExclusionPrefixes = [
+  "84713001",
+  "84714101",
+  "84714900",
+  "84715001",
+  "847141",
+  "847149",
+  "84716010",
+  "84716020",
+  "84716070",
+  "84716080",
+  "84716090",
+  "84717010",
+  "84717020",
+  "84717030",
+  "84717040",
+  "84717050",
+  "84717060",
+  "84717090",
+  "84718010",
+  "84718040",
+  "84718090",
+  "84719000",
+  "85171300",
+  "85171400",
+  "85176100",
+  "85176200",
+  "85176900",
+  "85177100",
+  "85411000",
+  "85412100",
+  "85412900",
+  "85413000",
+  "85414100",
+  "85414910",
+  "85414970",
+  "85414980",
+  "85414995",
+  "85415100",
+  "85415900",
+  "85419000"
+];
+
 const state = {
   mode: "search",
   rows: [],
@@ -33,6 +76,8 @@ const state = {
   syncExpanded: false,
   lastQuery: "",
   lastChapter: "01",
+  section122ExclusionPrefixes: [...section122FallbackExclusionPrefixes],
+  section122ExclusionsSource: "内置 Annex II 兜底清单",
   chapters: []
 };
 
@@ -249,10 +294,27 @@ async function init() {
   renderSearchHistory();
   setTransportMode(state.transportMode);
   setClearanceMode(state.clearanceMode);
-  await Promise.all([loadStatus(), loadChapters(), loadSyncStatus()]);
+  await Promise.all([loadStatus(), loadChapters(), loadSyncStatus(), loadSection122Exclusions()]);
   setInterval(loadSyncStatus, 60 * 1000);
   showSearchPrompt();
   calculate();
+}
+
+async function loadSection122Exclusions(force = false) {
+  try {
+    const data = await loadStaticData("section122-exclusions.json", force);
+    const codes = (data.codes || [])
+      .map(normalizeStaticHtsDigits)
+      .filter((code) => code.length >= 4);
+    if (!codes.length) {
+      return;
+    }
+    state.section122ExclusionPrefixes = [...new Set([...section122FallbackExclusionPrefixes, ...codes])]
+      .sort((a, b) => b.length - a.length || a.localeCompare(b));
+    state.section122ExclusionsSource = data.sourceName || "Section 122 Annex II exclusion list";
+  } catch (error) {
+    console.warn(`Section 122 exclusion list unavailable: ${error.message}`);
+  }
 }
 
 function bindEvents() {
@@ -627,6 +689,7 @@ async function refreshData() {
   setLoading(true);
   try {
     await api("/api/refresh", { method: "POST" });
+    await loadSection122Exclusions(true);
     await loadStatus(true);
     await loadSyncStatus();
     if (state.mode === "chapter") {
@@ -752,8 +815,9 @@ function renderAdditionalCodes(row) {
       .slice(0, 3)
       .map((rule) => {
         if (rule.exempt) {
+          const code = rule.exemptionCode || rule.code || "";
           const rate = rule.rate == null ? "" : ` ${formatRateNumber(rule.rate)}%`;
-          return `<span class="code-tag">${escapeHtml(rule.shortLabel)} ${escapeHtml(rule.code || "")}${escapeHtml(rate)} 豁免</span>`;
+          return `<span class="code-tag">${escapeHtml(rule.shortLabel)} ${escapeHtml(code)}${escapeHtml(rate)} 豁免</span>`;
         }
         const rate = rule.exemptionStatus === "多选1" ? "多选1" : rule.rate == null ? "需判断" : `+${rule.rate}%`;
         return `<span class="code-tag">${escapeHtml(rule.shortLabel)} ${escapeHtml(rule.code || "")} ${escapeHtml(rate)}</span>`;
@@ -815,14 +879,24 @@ function getTemporary122Exemption(row, context = {}) {
     return null;
   }
 
+  const exemptionCode = exclusion.code || "9903.03.06";
   return {
-    code: "9903.03.06",
+    code: exemptionCode,
     summaryZh: `122 临时关税有关联，但该商品属于 ${exclusion.label}，当前不计入 +10%。`,
     note: `9903.03.01 排除 9903.03.02-9903.03.11 所列商品；${exclusion.note}`
   };
 }
 
 function getTemporary122Exclusion(row, context = {}) {
+  const annexIiMatch = findTemporary122AnnexIiExclusion(row);
+  if (annexIiMatch) {
+    return {
+      code: "9903.03.03",
+      label: `Annex II 排除清单 ${formatStaticHtsDigits(annexIiMatch)}`,
+      note: `${state.section122ExclusionsSource}列明 ${formatStaticHtsDigits(annexIiMatch)}，122 临时关税不自动加征。`
+    };
+  }
+
   if (context.hasSection232Match || isPotentialTemporary122Section232Exempt(row)) {
     return {
       label: "9903.03.06 所列钢、铝、铜、车辆零配件或其他 232 排除范围",
@@ -838,6 +912,15 @@ function getTemporary122Exclusion(row, context = {}) {
   }
 
   return null;
+}
+
+function findTemporary122AnnexIiExclusion(row) {
+  const hts = normalizeStaticHtsDigits(row.htsno);
+  if (!hts) {
+    return "";
+  }
+  return (state.section122ExclusionPrefixes || [])
+    .find((prefix) => prefix && (hts === prefix || hts.startsWith(prefix))) || "";
 }
 
 function isPotentialTemporary122Section232Exempt(row) {
@@ -1455,6 +1538,7 @@ function handleManualAssessmentInput(event) {
 }
 
 function renderAdditionalDutyItem(item, parsed, rule, applied) {
+  const displayCode = rule.exempt && rule.exemptionCode ? rule.exemptionCode : item.htsno || rule.code || "Chapter 99";
   const rateLabel = rule.exempt
     ? parsed.auto && parsed.rate > 0
       ? `${formatRateNumber(parsed.rate)}% 豁免`
@@ -1467,7 +1551,7 @@ function renderAdditionalDutyItem(item, parsed, rule, applied) {
   return `
     <div class="additional-duty-item ${applied ? "applied" : "not-applied"}">
       <div>
-        <strong>${escapeHtml(rule.label)} <span>${escapeHtml(item.htsno || rule.code || "Chapter 99")}</span></strong>
+        <strong>${escapeHtml(rule.label)} <span>${escapeHtml(displayCode)}</span></strong>
         <p class="zh-line">${escapeHtml(rule.summaryZh || item.descriptionZh || item.description || "暂无中文释义")}</p>
         ${englishLine}
         <small>General: ${escapeHtml(item.general || "--")}</small>
@@ -1480,7 +1564,8 @@ function renderAdditionalDutyItem(item, parsed, rule, applied) {
 
 function renderRestrictionItem(item, parsed, rule, applied) {
   const isSection232Miss = rule.source === "section232" && !/^99\d{2}\.\d{2}\.\d{2}$/.test(rule.code || "");
-  const code = isSection232Miss ? "未命中" : compactChapter99Code(item.htsno || rule.code || "Chapter 99");
+  const displayCode = rule.exempt && rule.exemptionCode ? rule.exemptionCode : item.htsno || rule.code || "Chapter 99";
+  const code = isSection232Miss ? "未命中" : compactChapter99Code(displayCode);
   const rateLabel = rule.exempt
     ? parsed.auto && parsed.rate > 0
       ? `${formatRateNumber(parsed.rate)}%`

@@ -18,6 +18,10 @@ const syncSourceConfig = {
     ids: ["htsStatus", "chapter99"],
     minutes: 60
   },
+  section122: {
+    ids: ["section122"],
+    minutes: 1440
+  },
   section232: {
     ids: ["section232"],
     minutes: 360
@@ -39,6 +43,7 @@ const syncSourceConfig = {
 const sourceLabels = {
   htsStatus: ["USITC HTS version", "USITC HTS", "Official HTS release and revision information.", "https://hts.usitc.gov/"],
   chapter99: ["Chapter 99 additional duties", "USITC HTS Chapter 99", "301, 122, 232 and other Chapter 99 rows.", "https://hts.usitc.gov/reststop/exportList?from=9900&to=9999&format=JSON&styles=false"],
+  section122: ["122 Annex II exclusions", "White House Section 122 Annex II", "Section 122 Annex II HTS exclusion prefixes used to avoid applying 9903.03.01 to excluded goods.", "https://www.whitehouse.gov/wp-content/uploads/2026/02/2026Section122.prc_.ANNEX2_.Final_.pdf"],
   section232: ["232 Metals HTS List", "CBP / GovDelivery Metals HTS List", "CBP Metals HTS List discovery and parsed entries.", "https://www.cbp.gov/trade/programs-administration/trade-remedies"],
   cotton: ["Cotton Import Assessment", "eCFR 7 CFR 1205", "Cotton import assessment table.", "https://www.ecfr.gov/current/title-7/subtitle-B/chapter-XI/part-1205/subpart-ECFR80efc31412f8612"],
   adcvdOfficial: ["AD/CVD official ACCESS", "ITA ACCESS AD/CVD", "Official ACCESS status monitor.", "https://access.trade.gov/adcvd"],
@@ -73,6 +78,9 @@ async function main() {
 
     if (selected.includes("hts")) {
       await exportHts(manifest);
+    }
+    if (selected.includes("section122")) {
+      await exportSection122(manifest);
     }
     if (selected.includes("section232")) {
       await exportSection232(manifest);
@@ -173,6 +181,22 @@ async function exportSection232(manifest) {
   });
 }
 
+async function exportSection122(manifest) {
+  console.log("Exporting Section 122 Annex II exclusion status...");
+  const data = await readJsonSafe(path.join(dataDir, "section122-exclusions.json"), {
+    generatedAt: now,
+    sourceUrl: sourceLabels.section122[3],
+    codes: []
+  });
+  const count = data.count || data.codes?.length || 0;
+  manifest.counts = { ...(manifest.counts || {}), section122Rows: count };
+  setSourceState(manifest, "section122", {
+    count,
+    fetchedAt: data.generatedAt || now,
+    sourceUrl: data.sourceUrl || sourceLabels.section122[3]
+  });
+}
+
 async function exportCotton(manifest) {
   console.log("Exporting cotton assessment index...");
   const old = await readJsonSafe(path.join(dataDir, "cotton.json"), null);
@@ -258,7 +282,7 @@ async function exportTranslations(manifest) {
 
 function expandScope(value) {
   if (!value || value === "all") {
-    return ["hts", "section232", "cotton", "adcvd", "translations"];
+    return ["hts", "section122", "section232", "cotton", "adcvd", "translations"];
   }
   return [...new Set(String(value).split(",").map((item) => item.trim()).filter(Boolean))];
 }
@@ -317,6 +341,7 @@ function setSourceState(manifest, id, detail) {
 
 function countForSource(id, counts) {
   if (id === "chapter99") return counts.chapter99Rows || 0;
+  if (id === "section122") return counts.section122Rows || 0;
   if (id === "section232") return counts.section232Rows || 0;
   if (id === "cotton") return counts.cottonRows || 0;
   if (id === "adcvdLocal") return counts.adcvdRows || 0;
@@ -325,7 +350,7 @@ function countForSource(id, counts) {
 }
 
 function sourceOrder(id) {
-  return ["htsStatus", "chapter99", "section232", "cotton", "adcvdOfficial", "adcvdLocal", "translations"].indexOf(id);
+  return ["htsStatus", "chapter99", "section122", "section232", "cotton", "adcvdOfficial", "adcvdLocal", "translations"].indexOf(id);
 }
 
 async function startServer() {
@@ -398,7 +423,7 @@ function getReleaseLabel(release) {
 }
 
 function getArgValue(name) {
-  const index = process.argv.indexOf(name);
+  const index = process.argv.lastIndexOf(name);
   return index >= 0 ? process.argv[index + 1] : "";
 }
 

@@ -17,6 +17,8 @@ const SECTION_232_MONITOR_URLS = [
   "https://www.cbp.gov/trade/programs-administration/trade-remedies",
   "https://content.govdelivery.com/accounts/USDHSCBP/bulletins/41aa83d"
 ];
+const SECTION_122_ANNEX_II_URL =
+  "https://www.whitehouse.gov/wp-content/uploads/2026/02/2026Section122.prc_.ANNEX2_.Final_.pdf";
 const COTTON_ASSESSMENT_URL =
   "https://www.ecfr.gov/current/title-7/subtitle-B/chapter-XI/part-1205/subpart-ECFR80efc31412f8612";
 const ADCVD_OFFICIAL_URL = "https://access.trade.gov/adcvd";
@@ -88,6 +90,14 @@ const syncSources = [
     url: "https://hts.usitc.gov/reststop/exportList?from=9900&to=9999&format=JSON&styles=false",
     intervalMs: 60 * 60 * 1000,
     description: "301、122、232 等 Chapter 99 税项基础数据。"
+  },
+  {
+    id: "section122",
+    name: "122 Annex II 排除清单",
+    sourceName: "White House Section 122 Annex II",
+    url: SECTION_122_ANNEX_II_URL,
+    intervalMs: 24 * 60 * 60 * 1000,
+    description: "用于判断 9903.03.01 排除项，命中时不计入 122 临时关税。"
   },
   {
     id: "section232",
@@ -1154,6 +1164,18 @@ async function runSyncTask(source, force = false) {
         force
       );
       detail = { count: getRows(data).length };
+    } else if (source.id === "section122") {
+      const snapshot = await loadSection122ExclusionSnapshot();
+      const response = await fetch(SECTION_122_ANNEX_II_URL, { method: "HEAD" });
+      if (!response.ok) {
+        throw new Error(`Section 122 Annex II source unavailable: ${response.status}`);
+      }
+      detail = {
+        count: snapshot.count,
+        sourceUrl: snapshot.sourceUrl || SECTION_122_ANNEX_II_URL,
+        generatedAt: snapshot.generatedAt,
+        sourceStatus: response.status
+      };
     } else if (source.id === "section232") {
       const mappings = await loadSection232Mappings(force);
       detail = {
@@ -1181,6 +1203,15 @@ async function runSyncTask(source, force = false) {
   } catch (error) {
     return setSyncError(source.id, error);
   }
+}
+
+async function loadSection122ExclusionSnapshot() {
+  const filePath = path.join(publicDir, "data", "section122-exclusions.json");
+  const data = JSON.parse(await readFile(filePath, "utf8"));
+  return {
+    ...data,
+    count: data.count || data.codes?.length || 0
+  };
 }
 
 function setSyncRunning(id) {
