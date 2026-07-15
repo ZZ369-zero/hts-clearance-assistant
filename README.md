@@ -63,7 +63,7 @@ Actions 会生成并提交 `public/data`，然后部署 `public` 到 GitHub Page
 npm run check:policy-sentinel
 ```
 
-当前哨兵覆盖 Section 122 Annex II 豁免、`8471.30.0100` 不计入 122、相关电子类 Annex II 前缀、`3304100000` 的 AM7/FD2 认证提示、232 清单和 AD/CVD 快照。校验失败时 Actions 会停止提交和部署，避免后台数据刷新成功但页面业务结论仍然异常。
+当前哨兵覆盖 Section 122 Annex II 豁免、`8471.30.0100` 不计入 122、`6307.90.98.91` 不误继承 `9903.91.01`、相关电子类 Annex II 前缀、`3304100000` 的 AM7/FD2 认证提示、232 清单和 AD/CVD 快照。校验失败时 Actions 会停止提交和部署，避免后台数据刷新成功但页面业务结论仍然异常。
 
 手动测试静态模式：
 

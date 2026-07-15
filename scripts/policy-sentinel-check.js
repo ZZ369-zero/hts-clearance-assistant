@@ -29,6 +29,7 @@ async function main() {
   checkChapter99(chapter99);
   checkLaptop122Outcome(searchIndex, section122);
   checkRelatedAnnexIiElectronics(section122);
+  checkTextile6307909891Outcome(searchIndex);
   checkCertificationPrompt(searchIndex);
   checkSection232Snapshot(section232);
   checkAdCvdSnapshot(adCvd);
@@ -101,6 +102,16 @@ function checkRelatedAnnexIiElectronics(section122) {
     "related Annex II electronics prefixes stay covered",
     missing.length === 0,
     `missing=${missing.map(formatHts).join(",") || "none"}`
+  );
+}
+
+function checkTextile6307909891Outcome(searchIndex) {
+  const row = findRowByDigits(searchIndex, "6307909891");
+  const codes = new Set(row?.additionalDutyCodes || []);
+  record(
+    "6307.90.98.91 keeps current China 301 mapping without inherited 9903.91.01",
+    Boolean(row && codes.has("9903.88.15") && codes.has("9903.88.69") && !codes.has("9903.91.01") && !codes.has("9903.91.07")),
+    `row=${row?.htsno || "missing"}; additionalDutyCodes=${[...codes].join(",") || "none"}`
   );
 }
 

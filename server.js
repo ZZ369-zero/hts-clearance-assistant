@@ -2754,7 +2754,7 @@ function longestTermLength(terms) {
 }
 
 function normalizeRows(rows) {
-  return applyRowInheritance(rows.map((row) => {
+  const normalized = applyRowInheritance(rows.map((row) => {
     const description = cleanHtml(row.description);
     const footnotes = normalizeFootnotes(row.footnotes);
     const additionalDuties = cleanHtml(row.additionalDuties || row.addiitionalDuties);
@@ -2779,6 +2779,7 @@ function normalizeRows(rows) {
       status: cleanValue(row.status)
     };
   }));
+  return normalized.map(applyKnownAdditionalDutyOverrides);
 }
 
 async function normalizeSearchRows(rows, query, force = false) {
@@ -2965,6 +2966,42 @@ function mergeInheritedFields(row, parent) {
     row.inheritedFields = [...inheritedFields];
   }
   return row;
+}
+
+// USITC China Tariffs lists these 6307.90.98 suffixes explicitly; do not
+// let the broader parent HTS footnote over-inherit stale China 301 codes.
+const knownAdditionalDutyCodeOverrides = new Map([
+  ["6307909825", new Set(["9903.88.15"])],
+  ["6307909835", new Set(["9903.88.15"])],
+  ["6307909842", new Set(["9903.91.07"])],
+  ["6307909844", new Set(["9903.91.07"])],
+  ["6307909850", new Set(["9903.91.07"])],
+  ["6307909870", new Set(["9903.91.07"])],
+  ["6307909875", new Set(["9903.91.07"])],
+  ["6307909882", new Set(["9903.88.15"])],
+  ["6307909884", new Set(["9903.88.15"])],
+  ["6307909885", new Set(["9903.88.15"])],
+  ["6307909887", new Set(["9903.88.15"])],
+  ["6307909891", new Set(["9903.88.15", "9903.88.69"])]
+]);
+
+function applyKnownAdditionalDutyOverrides(row) {
+  const allowedCodes = knownAdditionalDutyCodeOverrides.get(normalizeHtsDigits(row.htsno));
+  if (!allowedCodes || !(row.additionalDutyCodes || []).length) {
+    return row;
+  }
+
+  row.additionalDutyCodes = row.additionalDutyCodes.filter((code) => {
+    if (!isChina301DutyCode(code)) {
+      return true;
+    }
+    return allowedCodes.has(code);
+  });
+  return row;
+}
+
+function isChina301DutyCode(code) {
+  return /^9903\.(?:88|91|92)\.\d{2}$/.test(String(code || ""));
 }
 
 function normalizeUnits(units) {
