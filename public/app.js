@@ -2185,6 +2185,7 @@ async function staticApi(path, options = {}) {
   const url = new URL(path, window.location.origin);
   const pathname = url.pathname;
   const method = String(options.method || "GET").toUpperCase();
+  const forceRefresh = method === "POST" || url.searchParams.get("refresh") === "1";
 
   if (pathname === "/api/status") {
     const manifest = await loadStaticData("manifest.json");
@@ -2213,12 +2214,12 @@ async function staticApi(path, options = {}) {
   }
 
   if (pathname === "/api/search") {
-    return staticSearch(url.searchParams.get("q") || "");
+    return staticSearch(url.searchParams.get("q") || "", forceRefresh);
   }
 
   if (pathname === "/api/chapter") {
     const chapter = String(url.searchParams.get("chapter") || "01").padStart(2, "0");
-    return loadStaticData(`chapters/${chapter}.json`);
+    return loadStaticData(`chapters/${chapter}.json`, forceRefresh);
   }
 
   if (pathname === "/api/additional-duties") {
@@ -2254,6 +2255,7 @@ async function staticApi(path, options = {}) {
   }
 
   if (pathname === "/api/refresh") {
+    staticRuntime.cache.clear();
     const manifest = await loadStaticData("manifest.json", true);
     return {
       ok: true,
@@ -2266,7 +2268,7 @@ async function staticApi(path, options = {}) {
   throw new Error(`Static data endpoint is not available: ${pathname}`);
 }
 
-async function staticSearch(query) {
+async function staticSearch(query, force = false) {
   const originalQuery = String(query || "").trim();
   if ([...originalQuery].length < 2 && !/[\u3400-\u9fff]/.test(originalQuery)) {
     throw new Error("请输入至少 2 个字符");
@@ -2274,7 +2276,7 @@ async function staticSearch(query) {
 
   const digits = normalizeStaticHtsDigits(originalQuery);
   if (digits.length >= 4) {
-    const rows = await staticSearchByHts(digits);
+    const rows = await staticSearchByHts(digits, force);
     return {
       originalQuery,
       query: originalQuery,
@@ -2284,7 +2286,7 @@ async function staticSearch(query) {
     };
   }
 
-  const index = await loadStaticData("hts-search-index.json");
+  const index = await loadStaticData("hts-search-index.json", force);
   const plan = buildStaticSearchPlan(originalQuery);
   const rows = buildStaticSearchCandidates(index.value || [])
     .map((candidate) => ({ row: candidate.row, score: scoreStaticSearchRow(candidate, plan) }))
@@ -2541,9 +2543,9 @@ function escapeRegExpForSearch(value) {
   return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-async function staticSearchByHts(digits) {
+async function staticSearchByHts(digits, force = false) {
   const chapter = digits.slice(0, 2);
-  const data = await loadStaticData(`chapters/${chapter}.json`);
+  const data = await loadStaticData(`chapters/${chapter}.json`, force);
   const rows = (data.value || []).filter((row) => row.htsno);
   const exact = rows.filter((row) => normalizeStaticHtsDigits(row.htsno) === digits);
   if (exact.length) {
