@@ -13,6 +13,7 @@ on:
         options:
           - all
           - hts
+          - section122
           - section232
           - adcvd
           - cotton
@@ -20,6 +21,8 @@ on:
   schedule:
     # HTS / normal duty / Chapter 99: every 1 hour.
     - cron: "7 * * * *"
+    # Section 122 Annex II exclusions: every 24 hours.
+    - cron: "57 1 * * *"
     # 232 Metals HTS List: every 6 hours.
     - cron: "17 */6 * * *"
     # AD/CVD official monitor and static match snapshot: every 24 hours.
@@ -64,6 +67,7 @@ jobs:
           elif [ "${{ github.event_name }}" = "schedule" ]; then
             case "${{ github.event.schedule }}" in
               "7 * * * *") scope="hts" ;;
+              "57 1 * * *") scope="section122" ;;
               "17 */6 * * *") scope="section232" ;;
               "27 2 * * *") scope="adcvd" ;;
               "37 3 * * *") scope="cotton" ;;
@@ -78,6 +82,9 @@ jobs:
 
       - name: Export static data
         run: node scripts/export-static-data.js --scope "${{ steps.scope.outputs.scope }}"
+
+      - name: Run policy sentinel checks
+        run: npm run check:policy-sentinel
 
       - name: Commit refreshed data
         shell: bash

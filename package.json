@@ -8,11 +8,14 @@
     "start:lan": "set HOST=0.0.0.0&& node server.js",
     "export:static": "node scripts/export-static-data.js --scope all",
     "export:static:hts": "node scripts/export-static-data.js --scope hts",
+    "export:static:section122": "node scripts/export-static-data.js --scope section122",
     "export:static:section232": "node scripts/export-static-data.js --scope section232",
     "export:static:adcvd": "node scripts/export-static-data.js --scope adcvd",
     "export:static:cotton": "node scripts/export-static-data.js --scope cotton",
     "export:static:translations": "node scripts/export-static-data.js --scope translations",
-    "check:search-catalog": "node scripts/check-search-catalog-coverage.js"
+    "check:search-catalog": "node scripts/check-search-catalog-coverage.js",
+    "check:policy-sentinel": "node scripts/policy-sentinel-check.js",
+    "check": "npm run check:search-catalog && npm run check:policy-sentinel"
   },
   "engines": {
     "node": ">=20"
