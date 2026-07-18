@@ -15,12 +15,13 @@ main().catch((error) => {
 });
 
 async function main() {
-  const [manifest, searchIndex, chapter99, section122, section232, adCvd] = await Promise.all([
+  const [manifest, searchIndex, chapter99, section122, section232, cotton, adCvd] = await Promise.all([
     readJson(path.join(dataDir, "manifest.json")),
     readJson(path.join(dataDir, "hts-search-index.json")),
     readJson(path.join(dataDir, "chapter99.json")),
     readJson(path.join(dataDir, "section122-exclusions.json")),
     readJson(path.join(dataDir, "section232.json")),
+    readJson(path.join(dataDir, "cotton.json")),
     readJson(path.join(dataDir, "adcvd.json"))
   ]);
 
@@ -32,6 +33,7 @@ async function main() {
   checkTextile6307909891Outcome(searchIndex);
   checkCertificationPrompt(searchIndex);
   checkSection232Snapshot(section232);
+  checkCottonSnapshot(cotton);
   checkAdCvdSnapshot(adCvd);
 
   console.table(sentinels.map(({ name, status, detail }) => ({ name, status, detail })));
@@ -137,6 +139,16 @@ function checkSection232Snapshot(section232) {
     "section232 snapshot is non-empty and includes vehicle/derivative coverage",
     entries.length >= 1000 && hasVehicleOrDerivative,
     `count=${entries.length}; source=${section232.sourceUrl || section232.source?.url || "unknown"}`
+  );
+}
+
+function checkCottonSnapshot(cotton) {
+  const rows = cotton.rows || [];
+  const hasKnownCottonRate = rows.some((row) => cleanHts(row.hts) === "5201000500" && Number(row.usdPerKg) > 0);
+  record(
+    "cotton import assessment snapshot is non-empty",
+    rows.length >= 2000 && hasKnownCottonRate,
+    `count=${rows.length}; source=${cotton.source?.url || "unknown"}`
   );
 }
 

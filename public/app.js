@@ -114,6 +114,7 @@ const els = {
   chapterFilter: document.querySelector("#chapterFilter"),
   resultTitle: document.querySelector("#resultTitle"),
   resultCount: document.querySelector("#resultCount"),
+  searchGuide: document.querySelector("#searchGuide"),
   resultsBody: document.querySelector("#resultsBody"),
   emptyState: document.querySelector("#emptyState"),
   selectedCode: document.querySelector("#selectedCode"),
@@ -650,6 +651,7 @@ async function search(query, force = false) {
     saveSearchHistory(query);
     renderSearchHistory();
     els.resultTitle.textContent = data.translated ? `查询结果：${data.originalQuery} → ${data.query}` : `查询结果：${query}`;
+    renderSearchGuide(data.hints || []);
     renderRows(state.visibleRows);
     selectFirstSelectable();
     enhanceSearchResultTranslations(state.visibleRows);
@@ -674,6 +676,7 @@ async function loadChapter(chapter, force = false) {
     state.dataKind = "chapter";
     const title = state.chapters.find(([code]) => code === chapter)?.[1] || "HTS chapter";
     els.resultTitle.textContent = `${chapter} - ${title}`;
+    renderSearchGuide([]);
     els.chapterFilter.value = "";
     renderRows(state.visibleRows);
     selectFirstSelectable();
@@ -806,6 +809,21 @@ function renderRows(rows) {
       }
     });
   });
+}
+
+function renderSearchGuide(hints) {
+  const items = [...new Set((hints || []).map((item) => String(item || "").trim()).filter(Boolean))];
+  if (!items.length) {
+    els.searchGuide.classList.add("hidden");
+    els.searchGuide.innerHTML = "";
+    return;
+  }
+
+  els.searchGuide.classList.remove("hidden");
+  els.searchGuide.innerHTML = `
+    <span>分类要素</span>
+    ${items.map((item) => `<b>${escapeHtml(item)}</b>`).join("")}
+  `;
 }
 
 function renderAdditionalCodes(row) {
@@ -2299,6 +2317,7 @@ async function staticSearch(query, force = false) {
     originalQuery,
     query: plan.displayQuery || originalQuery,
     translated: plan.aliasMatched,
+    hints: plan.hints || [],
     count: rows.length,
     value: rows
   };
@@ -2354,6 +2373,9 @@ function buildStaticSearchPlan(query) {
     const prefixBoosts = [
       ...new Set(primaryAliasMatches.flatMap((entry) => entry.prefixBoosts || []).map((prefix) => normalizeStaticHtsDigits(prefix)).filter(Boolean))
     ];
+    const hints = [
+      ...new Set(primaryAliasMatches.flatMap((entry) => entry.hints || []).map((item) => String(item || "").trim()).filter(Boolean))
+    ];
     const chineseTerms = [...new Set(primaryAliasMatches.flatMap((entry) => entry.matchedTerms).map(normalizeSearchText).filter(Boolean))];
     return {
       aliasMatched: true,
@@ -2361,6 +2383,7 @@ function buildStaticSearchPlan(query) {
       chineseTerms,
       chapterBoosts,
       prefixBoosts,
+      hints,
       requireAllTerms: false,
       minimumMatches: 1,
       displayQuery: terms.slice(0, 4).join(" / ")
@@ -2373,6 +2396,7 @@ function buildStaticSearchPlan(query) {
     chineseTerms: hasChineseText(normalizedQuery) ? [normalizedQuery] : [],
     chapterBoosts: new Set(),
     prefixBoosts: [],
+    hints: [],
     requireAllTerms: true,
     minimumMatches: 1,
     displayQuery: normalizedQuery
@@ -2450,7 +2474,7 @@ function scoreStaticSearchRow(candidate, plan) {
     }
   }
 
-  return score + scoreStaticCodeSpecificity(row) - scoreStaticAccessoryPenalty(row, plan);
+  return score + scoreStaticCodeSpecificity(row, plan) - scoreStaticAccessoryPenalty(row, plan);
 }
 
 function scoreStaticAccessoryPenalty(row, plan) {
@@ -2469,6 +2493,12 @@ function scoreStaticAccessoryPenalty(row, plan) {
   if (watchQuery && /^straps,\s*bands\s+or\s+bracelets\s+entered\s+with\s+watches/.test(text)) {
     penalty += 220;
   }
+  const apparelQuery = queryTerms.some((term) =>
+    ["apparel", "clothing", "garment", "garments", "wearing apparel", "服饰", "服装", "衣服", "衣物", "成衣"].includes(term)
+  );
+  if (apparelQuery && /^garments\s+described\s+in\s+heading\b/.test(text)) {
+    penalty += 180;
+  }
   return penalty;
 }
 
@@ -2481,7 +2511,7 @@ function staticHasNegativeContext(haystack, term) {
   return new RegExp(`\\b(?:except|excluding|exclude|other\\s+than|not)\\b[^.;:]{0,90}${pattern}`, "i").test(haystack);
 }
 
-function scoreStaticCodeSpecificity(row) {
+function scoreStaticCodeSpecificity(row, plan = {}) {
   const digits = normalizeStaticHtsDigits(row.htsno);
   let score = 0;
 
@@ -2499,6 +2529,12 @@ function scoreStaticCodeSpecificity(row) {
     score += 30;
   } else {
     score -= 30;
+  }
+
+  if (plan.aliasMatched && digits.length < 8) {
+    score -= 220;
+  } else if (plan.aliasMatched && digits.length < 10) {
+    score -= 70;
   }
 
   if (String(row.description || "").trim().endsWith(":")) {
@@ -2872,6 +2908,7 @@ function showSearchPrompt(message = "请输入品名或 HTS CODE 查询。") {
   state.selected = null;
   els.resultTitle.textContent = "商品查询";
   els.resultCount.textContent = "";
+  renderSearchGuide([]);
   els.resultsBody.innerHTML = "";
   els.emptyState.textContent = message;
   els.emptyState.classList.remove("hidden");
@@ -2880,6 +2917,7 @@ function showSearchPrompt(message = "请输入品名或 HTS CODE 查询。") {
 function showMessage(message) {
   els.resultTitle.textContent = "请求失败";
   els.resultCount.textContent = "";
+  renderSearchGuide([]);
   els.resultsBody.innerHTML = "";
   els.emptyState.textContent = message;
   els.emptyState.classList.remove("hidden");

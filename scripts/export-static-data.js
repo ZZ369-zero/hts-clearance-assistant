@@ -207,11 +207,16 @@ async function exportCotton(manifest) {
     }
     throw error;
   });
-  if ((!data.rows || data.rows.length === 0) && old?.rows?.length) {
-    console.warn("Cotton export returned an empty table, keeping previous non-empty snapshot.");
-    data.rows = old.rows;
-    data.fetchedAt = old.fetchedAt;
-    data.retainedPreviousRows = true;
+  if (!data.rows || data.rows.length === 0) {
+    if (old?.rows?.length) {
+      console.warn("Cotton export returned an empty table, keeping previous non-empty snapshot.");
+      data.rows = old.rows;
+      data.fetchedAt = old.fetchedAt;
+      data.source = old.source || data.source;
+      data.retainedPreviousRows = true;
+    } else {
+      throw new Error("Cotton export returned an empty table and no previous non-empty snapshot is available.");
+    }
   }
   await writeJson(path.join(dataDir, "cotton.json"), data);
   manifest.counts = { ...(manifest.counts || {}), cottonRows: data.rows?.length || 0 };

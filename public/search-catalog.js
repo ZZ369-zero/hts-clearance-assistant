@@ -40,7 +40,13 @@ export const chineseSearchCatalog = [
   { terms: ["太阳能", "太阳能板", "太阳能组件", "光伏", "光伏板", "光伏组件"], queries: ["photovoltaic", "photovoltaic cells", "solar cells", "solar panel", "solar modules"], chapters: ["85", "94"], prefixBoosts: ["8541", "850180", "940541"] },
 
   { terms: ["鞋", "鞋子", "运动鞋", "靴子", "拖鞋"], queries: ["footwear", "shoes", "boots", "sandals"], chapters: ["64"], prefixBoosts: ["64"] },
-  { terms: ["服饰", "服装", "衣服", "衣物", "成衣"], queries: ["apparel", "clothing", "garment", "garments", "wearing apparel"], chapters: ["61", "62"], prefixBoosts: ["61", "62"] },
+  {
+    terms: ["服饰", "服装", "衣服", "衣物", "成衣"],
+    queries: ["apparel", "clothing", "garment", "garments", "wearing apparel"],
+    chapters: ["61", "62"],
+    prefixBoosts: ["61", "62"],
+    hints: ["针织或非针织", "男/女/童装", "纤维成分", "具体品类"]
+  },
   { terms: ["T恤", "T恤衫", "短袖"], queries: ["t-shirts", "singlets", "vests"], chapters: ["61", "62"], prefixBoosts: ["6109", "6206"] },
   { terms: ["衬衫"], queries: ["shirts", "blouses"], chapters: ["61", "62"], prefixBoosts: ["6105", "6106", "6205", "6206"] },
   { terms: ["裤子", "长裤", "短裤"], queries: ["trousers", "shorts", "breeches"], chapters: ["61", "62"], prefixBoosts: ["6103", "6104", "6203", "6204"] },
@@ -68,7 +74,13 @@ export const chineseSearchCatalog = [
   { terms: ["钱包"], queries: ["wallets", "purses"], chapters: ["42"], prefixBoosts: ["4202"] },
   { terms: ["眼镜", "太阳镜"], queries: ["spectacles", "eyewear", "glasses", "sunglasses"], chapters: ["90"], prefixBoosts: ["9004"] },
   { terms: ["镜子", "化妆镜", "LED化妆镜"], queries: ["glass mirrors", "mirrors", "illuminated mirrors", "containing led"], chapters: ["70", "94", "85"], prefixBoosts: ["7009911010", "7009915010", "7009921010", "7009925010", "7009", "9405"] },
-  { terms: ["钟表", "手表", "钟", "表"], queries: ["wrist watches", "pocket watches", "other watches", "clocks", "watch", "watches", "clock"], chapters: ["91"], prefixBoosts: ["9101", "9102", "9103", "9105"] },
+  {
+    terms: ["钟表", "手表", "钟", "表"],
+    queries: ["wrist watches", "pocket watches", "other watches", "clocks", "watch", "watches", "clock"],
+    chapters: ["91"],
+    prefixBoosts: ["9101", "9102", "9103", "9105"],
+    hints: ["手表或钟", "机芯/显示方式", "表壳材质", "表带材质/电池"]
+  },
   { terms: ["首饰", "饰品", "项链", "耳环", "戒指", "手链"], queries: ["jewelry", "imitation jewelry", "articles of jewelry"], chapters: ["71"], prefixBoosts: ["7113", "7117"] },
 
   { terms: ["家具"], queries: ["furniture"], chapters: ["94"], prefixBoosts: ["9401", "9403"] },
@@ -118,7 +130,13 @@ export const chineseSearchCatalog = [
   { terms: ["拼图"], queries: ["puzzles"], chapters: ["95"], prefixBoosts: ["9503"] },
   { terms: ["球", "篮球", "足球"], queries: ["balls", "sports balls"], chapters: ["95"], prefixBoosts: ["9506"] },
   { terms: ["健身器材", "运动器材"], queries: ["articles and equipment for general physical exercise", "gymnastics athletics other sports", "sports equipment", "exercise equipment"], chapters: ["95"], prefixBoosts: ["9506"] },
-  { terms: ["无人机", "无人飞行器"], queries: ["unmanned aircraft", "unmanned aircraft parts"], chapters: ["88"], prefixBoosts: ["8806"] },
+  {
+    terms: ["无人机", "无人飞行器"],
+    queries: ["unmanned aircraft", "unmanned aircraft parts"],
+    chapters: ["88"],
+    prefixBoosts: ["8806"],
+    hints: ["是否载人", "最大起飞重量", "整机或零件", "用途/监管证件"]
+  },
   { terms: ["自行车"], queries: ["bicycle", "bicycles"], chapters: ["87"], prefixBoosts: ["8712"] },
   { terms: ["电动车", "滑板车"], queries: ["electric bicycles", "scooters", "cycles"], chapters: ["87"], prefixBoosts: ["8711", "8712"] },
   { terms: ["汽车", "小汽车", "轿车", "乘用车", "家用车"], queries: ["motor cars", "passenger motor vehicles", "passenger automobiles", "automobiles", "motor vehicles principally designed for the transport of persons"], chapters: ["87"], prefixBoosts: ["870321", "870322", "870323", "870324", "870331", "870332", "870333", "870340", "870350", "870360", "870370", "870380", "870390", "8703"] },
@@ -255,8 +273,20 @@ export const chineseSearchCatalog = [
   { terms: ["医用手套", "医疗手套"], queries: ["medical gloves", "surgical gloves", "gloves"], chapters: ["40", "39"], prefixBoosts: ["4015", "3926"] },
   { terms: ["轮椅"], queries: ["wheelchairs", "invalid carriages"], chapters: ["87"], prefixBoosts: ["8713"] },
   { terms: ["助听器"], queries: ["hearing aids"], chapters: ["90"], prefixBoosts: ["9021"] },
-  { terms: ["滴剂", "滴液", "眼药水"], queries: ["medicaments primarily affecting the eyes", "medicaments", "measured doses", "drops", "oral suspension", "liquid form for oral intake"], chapters: ["30", "17", "21"], prefixBoosts: ["3004", "3003", "3006"] },
-  { terms: ["棉签"], queries: ["swab", "swabs", "flocked swabs"], chapters: ["56"], prefixBoosts: ["5601"] },
+  {
+    terms: ["滴剂", "滴液", "眼药水"],
+    queries: ["medicaments primarily affecting the eyes", "medicaments", "measured doses", "drops", "oral suspension", "liquid form for oral intake"],
+    chapters: ["30", "17", "21"],
+    prefixBoosts: ["3004", "3003", "3006"],
+    hints: ["药品/化妆品/食品", "用途部位", "成分", "剂量包装"]
+  },
+  {
+    terms: ["棉签"],
+    queries: ["swab", "swabs", "flocked swabs"],
+    chapters: ["56"],
+    prefixBoosts: ["5601"],
+    hints: ["植绒或棉头", "杆体材质", "医用或非医用"]
+  },
 
   { terms: ["宠物用品"], queries: ["pet accessories", "animal articles", "leashes", "collars"], chapters: ["42", "63", "39", "73"], prefixBoosts: ["4201", "3926", "6307"] },
   { terms: ["猫砂"], queries: ["cat litter", "mineral products", "bentonite"], chapters: ["25", "38"], prefixBoosts: ["2508", "3824"] },

@@ -21,6 +21,8 @@ const SECTION_122_ANNEX_II_URL =
   "https://www.whitehouse.gov/wp-content/uploads/2026/02/2026Section122.prc_.ANNEX2_.Final_.pdf";
 const COTTON_ASSESSMENT_URL =
   "https://www.ecfr.gov/current/title-7/subtitle-B/chapter-XI/part-1205/subpart-ECFR80efc31412f8612";
+const ECFR_TITLES_API_URL = "https://www.ecfr.gov/api/versioner/v1/titles.json";
+const ECFR_TITLE_7_XML_API_BASE = "https://www.ecfr.gov/api/versioner/v1/full";
 const ADCVD_OFFICIAL_URL = "https://access.trade.gov/adcvd";
 const TRANSLATE_API_BASE = "https://api.mymemory.translated.net/get";
 const ADCVD_CSV_PATH = path.resolve(__dirname, "..", "工作流", "中国输美_AD_CVD_HTS_CODE整理_主表.csv");
@@ -1335,8 +1337,9 @@ async function handleApi(req, res, url) {
     sendJson(res, 200, {
       ...table,
       source: {
+        ...(table.source || {}),
         name: "eCFR 7 CFR 1205 Import Assessment Table",
-        url: COTTON_ASSESSMENT_URL,
+        url: table.source?.url || COTTON_ASSESSMENT_URL,
         fetchedAt: table.fetchedAt
       }
     });
@@ -1388,6 +1391,7 @@ async function handleApi(req, res, url) {
       originalQuery,
       query: searchPlan.displayQuery,
       translated: searchPlan.aliasMatched || searchPlan.displayQuery !== originalQuery,
+      hints: searchPlan.hints || [],
       count: rows.length,
       value: rows
     });
@@ -1514,8 +1518,9 @@ async function handleApi(req, res, url) {
       hts,
       count: match ? 1 : 0,
       source: {
+        ...(table.source || {}),
         name: "eCFR 7 CFR 1205 Import Assessment Table",
-        url: COTTON_ASSESSMENT_URL,
+        url: table.source?.url || COTTON_ASSESSMENT_URL,
         fetchedAt: table.fetchedAt
       },
       value: match ? [match] : []
@@ -1746,6 +1751,54 @@ async function loadCottonAssessments(force = false) {
     return cached.data;
   }
 
+  const attempts = [];
+  const data =
+    (await loadCottonAssessmentsFromEcfrApi().catch((error) => {
+      attempts.push(`eCFR API: ${error.message}`);
+      return null;
+    })) ||
+    (await loadCottonAssessmentsFromCurrentPage().catch((error) => {
+      attempts.push(`eCFR page: ${error.message}`);
+      return null;
+    }));
+
+  if (!data?.rows?.length) {
+    throw new Error(`eCFR Cotton Assessment table returned no rows (${attempts.join("; ") || "no source attempted"})`);
+  }
+
+  cache.set(key, { time: now, data });
+  return data;
+}
+
+async function loadCottonAssessmentsFromEcfrApi() {
+  const issueDate = await loadEcfrTitleIssueDate(7);
+  const apiUrl = `${ECFR_TITLE_7_XML_API_BASE}/${issueDate}/title-7.xml?part=1205`;
+  const response = await fetch(apiUrl, {
+    headers: {
+      accept: "application/xml,text/xml,*/*",
+      "user-agent": "HTS-Clearance-Assistant/0.1"
+    }
+  });
+  if (!response.ok) {
+    throw new Error(`${response.status} ${response.statusText}`);
+  }
+
+  const xml = await response.text();
+  const rows = parseCottonAssessmentTable(xml);
+  const data = {
+    fetchedAt: new Date().toISOString(),
+    rows,
+    source: {
+      name: "eCFR 7 CFR 1205 Import Assessment Table",
+      url: apiUrl,
+      pageUrl: COTTON_ASSESSMENT_URL,
+      issueDate
+    }
+  };
+  return data;
+}
+
+async function loadCottonAssessmentsFromCurrentPage() {
   const response = await fetch(COTTON_ASSESSMENT_URL, {
     headers: {
       accept: "text/html,*/*",
@@ -1753,17 +1806,39 @@ async function loadCottonAssessments(force = false) {
     }
   });
   if (!response.ok) {
-    throw new Error(`eCFR Cotton Assessment request failed: ${response.status} ${response.statusText}`);
+    throw new Error(`${response.status} ${response.statusText}`);
   }
 
   const html = await response.text();
   const rows = parseCottonAssessmentTable(html);
-  const data = {
+  return {
     fetchedAt: new Date().toISOString(),
-    rows
+    rows,
+    source: {
+      name: "eCFR 7 CFR 1205 Import Assessment Table",
+      url: COTTON_ASSESSMENT_URL
+    }
   };
-  cache.set(key, { time: now, data });
-  return data;
+}
+
+async function loadEcfrTitleIssueDate(titleNumber) {
+  const response = await fetch(ECFR_TITLES_API_URL, {
+    headers: {
+      accept: "application/json,*/*",
+      "user-agent": "HTS-Clearance-Assistant/0.1"
+    }
+  });
+  if (!response.ok) {
+    throw new Error(`title issue date request failed: ${response.status} ${response.statusText}`);
+  }
+
+  const data = await response.json();
+  const title = (data.titles || []).find((item) => Number(item.number) === Number(titleNumber));
+  const issueDate = title?.latest_issue_date || title?.up_to_date_as_of || title?.latest_amended_on;
+  if (!issueDate) {
+    throw new Error(`title ${titleNumber} issue date missing`);
+  }
+  return issueDate;
 }
 
 function parseCottonAssessmentTable(html) {
@@ -1773,15 +1848,16 @@ function parseCottonAssessmentTable(html) {
   }
 
   const afterStart = html.slice(start);
-  const tableEnd = afterStart.indexOf("</tbody>");
-  const tableHtml = tableEnd >= 0 ? afterStart.slice(0, tableEnd) : afterStart;
+  const tableEndMatch = /<\/tbody>/i.exec(afterStart);
+  const tableHtml = tableEndMatch ? afterStart.slice(0, tableEndMatch.index) : afterStart;
   const rows = [];
-  const rowRegex = /<tr[^>]*>\s*<td[^>]*>(\d{6,10})<\/td>\s*<td[^>]*>([^<]+)<\/td>\s*<td[^>]*>([^<]+)<\/td>\s*<\/tr>/gi;
-  let match;
-  while ((match = rowRegex.exec(tableHtml))) {
-    const hts = normalizeHtsDigits(match[1]);
-    const conversionFactor = Number(cleanHtml(match[2]));
-    const centsPerKg = Number(cleanHtml(match[3]));
+  const rowRegex = /<tr\b[^>]*>([\s\S]*?)<\/tr>/gi;
+  let rowMatch;
+  while ((rowMatch = rowRegex.exec(tableHtml))) {
+    const cells = [...rowMatch[1].matchAll(/<t[dh]\b[^>]*>([\s\S]*?)<\/t[dh]>/gi)].map((cell) => cleanHtml(cell[1]));
+    const hts = normalizeHtsDigits(cells[0]);
+    const conversionFactor = Number(cells[1]);
+    const centsPerKg = Number(cells[2]);
     if (!hts || !Number.isFinite(centsPerKg)) {
       continue;
     }
@@ -2478,6 +2554,9 @@ function buildServerSearchPlan(query) {
   const prefixBoosts = [
     ...new Set(primaryCatalogMatches.flatMap((entry) => entry.prefixBoosts || []).map(normalizeHtsDigits).filter(Boolean))
   ];
+  const hints = [
+    ...new Set(primaryCatalogMatches.flatMap((entry) => entry.hints || []).map(cleanValue).filter(Boolean))
+  ];
 
   const queries = buildServerSearchQueries(terms, originalQuery);
   return {
@@ -2486,7 +2565,9 @@ function buildServerSearchPlan(query) {
     queries,
     displayQuery: terms.length ? terms.slice(0, 6).join(" / ") : originalQuery,
     aliasMatched: primaryCatalogMatches.length > 0 || legacyTerms.length > 0,
+    hints,
     plan: {
+      aliasMatched: primaryCatalogMatches.length > 0 || legacyTerms.length > 0,
       terms,
       chineseTerms,
       chapterBoosts,
@@ -2628,7 +2709,7 @@ function scoreServerSearchCandidate(candidate, plan) {
     }
   }
 
-  return score + scoreSearchSpecificity(row) - scoreServerAccessoryPenalty(row, plan);
+  return score + scoreSearchSpecificity(row, plan) - scoreServerAccessoryPenalty(row, plan);
 }
 
 function scoreServerSearchRow(row, plan) {
@@ -2674,7 +2755,7 @@ function scoreServerSearchRow(row, plan) {
     }
   }
 
-  return score + scoreSearchSpecificity(row) - scoreServerAccessoryPenalty(row, plan);
+  return score + scoreSearchSpecificity(row, plan) - scoreServerAccessoryPenalty(row, plan);
 }
 
 function scoreServerAccessoryPenalty(row, plan) {
@@ -2692,6 +2773,12 @@ function scoreServerAccessoryPenalty(row, plan) {
   const watchQuery = (plan.prefixBoosts || []).some((prefix) => ["9101", "9102", "9103", "9105"].includes(prefix));
   if (watchQuery && /^straps,\s*bands\s+or\s+bracelets\s+entered\s+with\s+watches/.test(text)) {
     penalty += 220;
+  }
+  const apparelQuery = queryTerms.some((term) =>
+    ["apparel", "clothing", "garment", "garments", "wearing apparel", "服饰", "服装", "衣服", "衣物", "成衣"].includes(term)
+  );
+  if (apparelQuery && /^garments\s+described\s+in\s+heading\b/.test(text)) {
+    penalty += 180;
   }
   return penalty;
 }
@@ -2869,7 +2956,7 @@ function rankSearchRows(rows) {
   return [...rows].sort((a, b) => scoreSearchSpecificity(b) - scoreSearchSpecificity(a) || String(a.htsno || "").localeCompare(String(b.htsno || "")));
 }
 
-function scoreSearchSpecificity(row) {
+function scoreSearchSpecificity(row, plan = {}) {
   const digits = normalizeHtsDigits(row.htsno);
   let score = 0;
 
@@ -2887,6 +2974,12 @@ function scoreSearchSpecificity(row) {
     score += 30;
   } else {
     score -= 30;
+  }
+
+  if (plan.aliasMatched && digits.length < 8) {
+    score -= 220;
+  } else if (plan.aliasMatched && digits.length < 10) {
+    score -= 70;
   }
 
   if (String(row.description || "").trim().endsWith(":")) {
@@ -3424,6 +3517,8 @@ function cleanHtml(value) {
     .replace(/&amp;/g, "&")
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
+    .replace(/&#x([0-9a-f]+);/gi, (_, code) => String.fromCodePoint(Number.parseInt(code, 16)))
+    .replace(/&#(\d+);/g, (_, code) => String.fromCodePoint(Number.parseInt(code, 10)))
     .replace(/Â¢/g, "¢")
     .replace(/\s+/g, " ")
     .trim();

@@ -658,6 +658,34 @@ tbody tr.selected td:first-child {
   white-space: nowrap;
 }
 
+.search-guide {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+  margin: -2px 0 10px;
+  padding: 8px 10px;
+  border-left: 3px solid var(--blue);
+  background: #f5f9fc;
+  color: #385169;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.search-guide span {
+  color: var(--blue);
+  font-weight: 900;
+}
+
+.search-guide b {
+  padding: 2px 7px;
+  border: 1px solid #ccd9e5;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #203241;
+  font-weight: 800;
+}
+
 .additional-cell {
   white-space: normal;
 }
