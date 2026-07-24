@@ -13,6 +13,7 @@ on:
         options:
           - all
           - hts
+          - forcedLabor301
           - section122
           - section232
           - adcvd
@@ -66,7 +67,7 @@ jobs:
             scope="${{ inputs.scope }}"
           elif [ "${{ github.event_name }}" = "schedule" ]; then
             case "${{ github.event.schedule }}" in
-              "7 * * * *") scope="hts" ;;
+              "7 * * * *") scope="hts,forcedLabor301" ;;
               "57 1 * * *") scope="section122" ;;
               "17 */6 * * *") scope="section232" ;;
               "27 2 * * *") scope="adcvd" ;;

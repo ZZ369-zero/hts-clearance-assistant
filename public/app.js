@@ -234,6 +234,16 @@ const dutyRuleCatalog = {
     exemptionStatus: "无豁免",
     note: "中国原产商品常见加征规则，需确认排除清单和原产国。"
   },
+  "9903.05.31": {
+    group: "301",
+    label: "新301-强迫劳动",
+    shortLabel: "新301",
+    rate: 12.5,
+    autoApply: true,
+    summaryZh: "新301强迫劳动最终行动，中国原产商品对应 9903.05.31，当前税率 +12.5%。",
+    exemptionStatus: "条件适用",
+    note: "适用于 2026-07-24 00:01 美东后申报的中国原产商品；9903.05.85-9903.05.92 所列排除项需人工复核。"
+  },
   "9903.03.01": {
     group: "122",
     label: "122-临时关税",
@@ -256,7 +266,46 @@ const dutyRuleCatalog = {
   }
 };
 
-const defaultAdditionalDutyCodes = ["9903.03.01"];
+const temporary122Policy = {
+  code: "9903.03.01",
+  effectiveFrom: "2026-02-24T05:01:00.000Z",
+  effectiveTo: "2026-07-24T04:01:00.000Z",
+  sourceName: "CBP CSMS #67844987",
+  sourceUrl: "https://content.govdelivery.com/accounts/USDHSCBP/bulletins/40b3b7b"
+};
+
+const forcedLabor301Policy = {
+  code: "9903.05.31",
+  effectiveFrom: "2026-07-24T04:01:00.000Z",
+  country: "China",
+  sourceName: "USTR Section 301 Forced Labor Final Action",
+  sourceUrl: "https://ustr.gov/sites/default/files/files/Press/Releases/2026/FLIP%20301%20Investigation%20Final%20Action%20FRN%207-23-26%20FINAL.pdf"
+};
+
+const supplementalChapter99Rows = [
+  {
+    htsno: "9903.05.31",
+    statisticalSuffix: "",
+    description: "Except for products described in headings 9903.05.85-9903.05.92, articles the product of China, as provided for in U.S. note 52 to this subchapter",
+    descriptionEn: "Except for products described in headings 9903.05.85-9903.05.92, articles the product of China, as provided for in U.S. note 52 to this subchapter",
+    descriptionZh: "除 9903.05.85-9903.05.92 所列产品外，中国原产商品按美国注释 52 适用新301强迫劳动附加税。",
+    indent: 0,
+    units: [],
+    general: "The duty provided in the applicable subheading + 12.5%",
+    special: "The duty provided in the applicable subheading + 12.5%",
+    other: "The duty provided in the applicable subheading + 12.5%",
+    additionalDuties: "",
+    additionalDutyCodes: [],
+    quotaQuantity: "",
+    effectivePeriod: "Effective for covered goods entered for consumption on or after 2026-07-24 00:01 EDT.",
+    footnotes: [],
+    superior: false,
+    unique: false,
+    status: "",
+    sourceName: forcedLabor301Policy.sourceName,
+    sourceUrl: forcedLabor301Policy.sourceUrl
+  }
+];
 
 const vehiclePartsSection232Options = [
   {
@@ -846,7 +895,7 @@ function renderAdditionalCodes(row) {
 }
 
 function buildAdditionalDutyRules(row, context = {}) {
-  const sourceCodes = [...new Set([...(row.additionalDutyCodes || []), ...defaultAdditionalDutyCodes])];
+  const sourceCodes = [...new Set([...(row.additionalDutyCodes || []), ...getDefaultAdditionalDutyCodes(context)])];
   return sourceCodes.map((code) => {
     if (isSection232Code(code)) {
       return createSection232Rule({
@@ -859,21 +908,74 @@ function buildAdditionalDutyRules(row, context = {}) {
     }
     const catalog = dutyRuleCatalog[code] || inferDutyRuleByCode(code);
     const temporary122Choice = code === "9903.03.01" ? getTemporary122Choice(row, context) : null;
-    const temporary122Exemption = code === "9903.03.01" && !temporary122Choice ? getTemporary122Exemption(row, context) : null;
+    const temporary122Inactive = code === "9903.03.01" ? getTemporary122Inactive(context) : null;
+    const temporary122Exemption = code === "9903.03.01" && !temporary122Choice && !temporary122Inactive
+      ? getTemporary122Exemption(row, context)
+      : null;
     return {
       code,
       group: catalog.group || catalog.shortLabel || "CH99",
       label: catalog.label || "Chapter 99 附加税",
       shortLabel: catalog.shortLabel || "CH99",
       rate: catalog.rate ?? null,
-      autoApply: temporary122Choice || temporary122Exemption ? false : catalog.autoApply !== false,
-      summaryZh: temporary122Choice?.summaryZh || temporary122Exemption?.summaryZh || catalog.summaryZh,
-      exemptionStatus: temporary122Choice?.exemptionStatus || (temporary122Exemption ? "不计入" : catalog.exemptionStatus || "需确认"),
-      note: temporary122Choice?.note || temporary122Exemption?.note || catalog.note || "来自 USITC 脚注或常见附加税规则，需复核适用条件。",
+      autoApply: temporary122Choice || temporary122Inactive || temporary122Exemption ? false : catalog.autoApply !== false,
+      summaryZh: temporary122Choice?.summaryZh || temporary122Inactive?.summaryZh || temporary122Exemption?.summaryZh || catalog.summaryZh,
+      exemptionStatus: temporary122Choice?.exemptionStatus || temporary122Inactive?.exemptionStatus || (temporary122Exemption ? "不计入" : catalog.exemptionStatus || "需确认"),
+      note: temporary122Choice?.note || temporary122Inactive?.note || temporary122Exemption?.note || catalog.note || "来自 USITC 脚注或常见附加税规则，需复核适用条件。",
       exempt: Boolean(temporary122Exemption),
       exemptionCode: temporary122Exemption?.code || ""
     };
   });
+}
+
+function getDefaultAdditionalDutyCodes(context = {}) {
+  const referenceDate = getPolicyReferenceDate(context);
+  const codes = [];
+  if (isPolicyActive(temporary122Policy, referenceDate)) {
+    codes.push(temporary122Policy.code);
+  }
+  if (isPolicyEffective(forcedLabor301Policy, referenceDate)) {
+    codes.push(forcedLabor301Policy.code);
+  }
+  return codes;
+}
+
+function getPolicyReferenceDate(context = {}) {
+  const value = context.entryDate || context.referenceDate || "";
+  const date = value ? new Date(value) : new Date();
+  return Number.isNaN(date.getTime()) ? new Date() : date;
+}
+
+function isPolicyEffective(policy, date = new Date()) {
+  const start = new Date(policy.effectiveFrom);
+  return !Number.isNaN(start.getTime()) && date >= start;
+}
+
+function isPolicyActive(policy, date = new Date()) {
+  if (!isPolicyEffective(policy, date)) {
+    return false;
+  }
+  if (!policy.effectiveTo) {
+    return true;
+  }
+  const end = new Date(policy.effectiveTo);
+  return Number.isNaN(end.getTime()) || date < end;
+}
+
+function getTemporary122Inactive(context = {}) {
+  const referenceDate = getPolicyReferenceDate(context);
+  if (isPolicyActive(temporary122Policy, referenceDate)) {
+    return null;
+  }
+  const end = new Date(temporary122Policy.effectiveTo);
+  if (Number.isNaN(end.getTime()) || referenceDate < end) {
+    return null;
+  }
+  return {
+    exemptionStatus: "已截止",
+    summaryZh: "122 临时关税适用期已截止，当前不自动计入 +10%。",
+    note: `${temporary122Policy.sourceName} 显示 9903.03.01 适用至 2026-07-24 00:01 美东；当前估算改按新301强迫劳动规则复核。`
+  };
 }
 
 function getTemporary122Choice(row, context = {}) {
@@ -2247,6 +2349,8 @@ async function staticApi(path, options = {}) {
       .filter(Boolean))];
     const chapter99 = await loadStaticData("chapter99.json");
     const rows = (chapter99.value || []).filter((row) => codes.includes(row.htsno));
+    const rowCodes = new Set(rows.map((row) => row.htsno));
+    rows.push(...supplementalChapter99Rows.filter((row) => codes.includes(row.htsno) && !rowCodes.has(row.htsno)));
     return { count: rows.length, value: rows };
   }
 

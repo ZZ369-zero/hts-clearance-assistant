@@ -19,6 +19,8 @@ const SECTION_232_MONITOR_URLS = [
 ];
 const SECTION_122_ANNEX_II_URL =
   "https://www.whitehouse.gov/wp-content/uploads/2026/02/2026Section122.prc_.ANNEX2_.Final_.pdf";
+const FORCED_LABOR_301_SOURCE_URL =
+  "https://ustr.gov/sites/default/files/files/Press/Releases/2026/FLIP%20301%20Investigation%20Final%20Action%20FRN%207-23-26%20FINAL.pdf";
 const COTTON_ASSESSMENT_URL =
   "https://www.ecfr.gov/current/title-7/subtitle-B/chapter-XI/part-1205/subpart-ECFR80efc31412f8612";
 const ECFR_TITLES_API_URL = "https://www.ecfr.gov/api/versioner/v1/titles.json";
@@ -27,6 +29,29 @@ const ADCVD_OFFICIAL_URL = "https://access.trade.gov/adcvd";
 const TRANSLATE_API_BASE = "https://api.mymemory.translated.net/get";
 const ADCVD_CSV_PATH = path.resolve(__dirname, "..", "工作流", "中国输美_AD_CVD_HTS_CODE整理_主表.csv");
 const ADCVD_SOURCE_XLSX_PATH = path.resolve(__dirname, "..", "工作流", "中国输美_AD_CVD_HTS_CODE整理_2026-07-06.xlsx");
+
+const forcedLabor301SupplementalRows = [
+  {
+    htsno: "9903.05.31",
+    statisticalSuffix: "",
+    description: "Except for products described in headings 9903.05.85-9903.05.92, articles the product of China, as provided for in U.S. note 52 to this subchapter",
+    descriptionEn: "Except for products described in headings 9903.05.85-9903.05.92, articles the product of China, as provided for in U.S. note 52 to this subchapter",
+    descriptionZh: "除 9903.05.85-9903.05.92 所列产品外，中国原产商品按美国注释 52 适用新301强迫劳动附加税。",
+    indent: 0,
+    units: [],
+    general: "The duty provided in the applicable subheading + 12.5%",
+    special: "The duty provided in the applicable subheading + 12.5%",
+    other: "The duty provided in the applicable subheading + 12.5%",
+    additionalDuties: "",
+    additionalDutyCodes: [],
+    quotaQuantity: "",
+    effectivePeriod: "Effective for covered goods entered for consumption on or after 2026-07-24 00:01 EDT.",
+    footnotes: [],
+    superior: false,
+    unique: false,
+    status: ""
+  }
+];
 
 const adCvdHtsAliasRules = [
   {
@@ -92,6 +117,14 @@ const syncSources = [
     url: "https://hts.usitc.gov/reststop/exportList?from=9900&to=9999&format=JSON&styles=false",
     intervalMs: 60 * 60 * 1000,
     description: "301、122、232 等 Chapter 99 税项基础数据。"
+  },
+  {
+    id: "forcedLabor301",
+    name: "新301 强迫劳动税项",
+    sourceName: "USTR Section 301 Forced Labor Final Action",
+    url: FORCED_LABOR_301_SOURCE_URL,
+    intervalMs: 60 * 60 * 1000,
+    description: "补充 USITC 暂未入库的 9903.05.31 中国原产商品 12.5% 附加税。"
   },
   {
     id: "section122",
@@ -1166,6 +1199,19 @@ async function runSyncTask(source, force = false) {
         force
       );
       detail = { count: getRows(data).length };
+    } else if (source.id === "forcedLabor301") {
+      const snapshot = await loadForcedLabor301Snapshot();
+      const response = await fetch(FORCED_LABOR_301_SOURCE_URL, { method: "HEAD" });
+      if (!response.ok) {
+        throw new Error(`USTR forced labor Section 301 source unavailable: ${response.status}`);
+      }
+      detail = {
+        count: snapshot.chapter99Rows?.length || 0,
+        effectiveFrom: snapshot.effectiveFrom,
+        country: snapshot.country,
+        sourceUrl: snapshot.sourceUrl || FORCED_LABOR_301_SOURCE_URL,
+        sourceStatus: response.status
+      };
     } else if (source.id === "section122") {
       const snapshot = await loadSection122ExclusionSnapshot();
       const response = await fetch(SECTION_122_ANNEX_II_URL, { method: "HEAD" });
@@ -1214,6 +1260,22 @@ async function loadSection122ExclusionSnapshot() {
     ...data,
     count: data.count || data.codes?.length || 0
   };
+}
+
+async function loadForcedLabor301Snapshot() {
+  const filePath = path.join(publicDir, "data", "forced-labor-301.json");
+  try {
+    return JSON.parse(await readFile(filePath, "utf8"));
+  } catch {
+    return {
+      generatedAt: new Date().toISOString(),
+      sourceName: "USTR Section 301 Forced Labor Final Action",
+      sourceUrl: FORCED_LABOR_301_SOURCE_URL,
+      effectiveFrom: "2026-07-24T04:01:00.000Z",
+      country: "China",
+      chapter99Rows: forcedLabor301SupplementalRows
+    };
+  }
 }
 
 function setSyncRunning(id) {
@@ -1468,6 +1530,11 @@ async function handleApi(req, res, url) {
       const match = getRows(data).find((row) => cleanValue(row.htsno) === code);
       if (match) {
         rows.push(match);
+      } else {
+        const supplemental = getSupplementalChapter99Row(code);
+        if (supplemental) {
+          rows.push(supplemental);
+        }
       }
     }
 
@@ -2867,6 +2934,10 @@ function normalizeRows(rows) {
     };
   }));
   return normalized.map(applyKnownAdditionalDutyOverrides);
+}
+
+function getSupplementalChapter99Row(code) {
+  return forcedLabor301SupplementalRows.find((row) => cleanValue(row.htsno) === cleanValue(code)) || null;
 }
 
 async function normalizeSearchRows(rows, query, force = false) {

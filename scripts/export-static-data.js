@@ -12,10 +12,49 @@ const port = Number(process.env.STATIC_EXPORT_PORT || 4183);
 const baseUrl = process.env.STATIC_EXPORT_BASE_URL || `http://127.0.0.1:${port}`;
 const scope = getArgValue("--scope") || process.env.STATIC_EXPORT_SCOPE || "all";
 const now = new Date().toISOString();
+const forcedLabor301SourceUrl =
+  "https://ustr.gov/sites/default/files/files/Press/Releases/2026/FLIP%20301%20Investigation%20Final%20Action%20FRN%207-23-26%20FINAL.pdf";
+
+const forcedLabor301Snapshot = {
+  generatedAt: now,
+  sourceName: "USTR Section 301 Forced Labor Final Action",
+  sourceUrl: forcedLabor301SourceUrl,
+  effectiveFrom: "2026-07-24T04:01:00.000Z",
+  country: "China",
+  rate: 12.5,
+  chapter99Rows: [
+    {
+      htsno: "9903.05.31",
+      statisticalSuffix: "",
+      description: "Except for products described in headings 9903.05.85-9903.05.92, articles the product of China, as provided for in U.S. note 52 to this subchapter",
+      descriptionEn: "Except for products described in headings 9903.05.85-9903.05.92, articles the product of China, as provided for in U.S. note 52 to this subchapter",
+      descriptionZh: "除 9903.05.85-9903.05.92 所列产品外，中国原产商品按美国注释 52 适用新301强迫劳动附加税。",
+      indent: 0,
+      units: [],
+      general: "The duty provided in the applicable subheading + 12.5%",
+      special: "The duty provided in the applicable subheading + 12.5%",
+      other: "The duty provided in the applicable subheading + 12.5%",
+      additionalDuties: "",
+      additionalDutyCodes: [],
+      quotaQuantity: "",
+      effectivePeriod: "Effective for covered goods entered for consumption on or after 2026-07-24 00:01 EDT.",
+      footnotes: [],
+      superior: false,
+      unique: false,
+      status: "",
+      sourceName: "USTR Section 301 Forced Labor Final Action",
+      sourceUrl: forcedLabor301SourceUrl
+    }
+  ]
+};
 
 const syncSourceConfig = {
   hts: {
     ids: ["htsStatus", "chapter99"],
+    minutes: 60
+  },
+  forcedLabor301: {
+    ids: ["forcedLabor301"],
     minutes: 60
   },
   section122: {
@@ -43,6 +82,7 @@ const syncSourceConfig = {
 const sourceLabels = {
   htsStatus: ["USITC HTS version", "USITC HTS", "Official HTS release and revision information.", "https://hts.usitc.gov/"],
   chapter99: ["Chapter 99 additional duties", "USITC HTS Chapter 99", "301, 122, 232 and other Chapter 99 rows.", "https://hts.usitc.gov/reststop/exportList?from=9900&to=9999&format=JSON&styles=false"],
+  forcedLabor301: ["New 301 forced labor duty", "USTR Section 301 Forced Labor Final Action", "Supplemental 9903.05.31 rule while USITC Chapter 99 catches up.", forcedLabor301SourceUrl],
   section122: ["122 Annex II exclusions", "White House Section 122 Annex II", "Section 122 Annex II HTS exclusion prefixes used to avoid applying 9903.03.01 to excluded goods.", "https://www.whitehouse.gov/wp-content/uploads/2026/02/2026Section122.prc_.ANNEX2_.Final_.pdf"],
   section232: ["232 Metals HTS List", "CBP / GovDelivery Metals HTS List", "CBP Metals HTS List discovery and parsed entries.", "https://www.cbp.gov/trade/programs-administration/trade-remedies"],
   cotton: ["Cotton Import Assessment", "eCFR 7 CFR 1205", "Cotton import assessment table.", "https://www.ecfr.gov/current/title-7/subtitle-B/chapter-XI/part-1205/subpart-ECFR80efc31412f8612"],
@@ -78,6 +118,9 @@ async function main() {
 
     if (selected.includes("hts")) {
       await exportHts(manifest);
+    }
+    if (selected.includes("forcedLabor301")) {
+      await exportForcedLabor301(manifest);
     }
     if (selected.includes("section122")) {
       await exportSection122(manifest);
@@ -178,6 +221,23 @@ async function exportSection232(manifest) {
     url: data.sourceUrl || data.source?.url,
     effectiveNote: data.effectiveNote,
     fetchedAt: data.fetchedAt || now
+  });
+}
+
+async function exportForcedLabor301(manifest) {
+  console.log("Exporting forced labor Section 301 supplemental rule...");
+  const data = {
+    ...forcedLabor301Snapshot,
+    generatedAt: now
+  };
+  await writeJson(path.join(dataDir, "forced-labor-301.json"), data);
+  manifest.counts = { ...(manifest.counts || {}), forcedLabor301Rows: data.chapter99Rows?.length || 0 };
+  setSourceState(manifest, "forcedLabor301", {
+    count: data.chapter99Rows?.length || 0,
+    sourceUrl: data.sourceUrl,
+    effectiveFrom: data.effectiveFrom,
+    country: data.country,
+    fetchedAt: data.generatedAt
   });
 }
 
@@ -287,7 +347,7 @@ async function exportTranslations(manifest) {
 
 function expandScope(value) {
   if (!value || value === "all") {
-    return ["hts", "section122", "section232", "cotton", "adcvd", "translations"];
+    return ["hts", "forcedLabor301", "section122", "section232", "cotton", "adcvd", "translations"];
   }
   return [...new Set(String(value).split(",").map((item) => item.trim()).filter(Boolean))];
 }
@@ -328,9 +388,20 @@ function mergeSources(existing, selected, counts) {
 }
 
 function setSourceState(manifest, id, detail) {
-  const source = (manifest.sources || []).find((item) => item.id === id);
+  manifest.sources = manifest.sources || [];
+  let source = manifest.sources.find((item) => item.id === id);
   if (!source) {
-    return;
+    const labels = sourceLabels[id] || [id, id, "", ""];
+    source = {
+      id,
+      name: labels[0],
+      sourceName: labels[1],
+      url: labels[3] || "",
+      description: labels[2] || "",
+      intervalMinutes: intervalMinutesForSource(id),
+      state: {}
+    };
+    manifest.sources.push(source);
   }
   source.state = {
     ...(source.state || {}),
@@ -344,8 +415,18 @@ function setSourceState(manifest, id, detail) {
   };
 }
 
+function intervalMinutesForSource(id) {
+  for (const config of Object.values(syncSourceConfig)) {
+    if (config.ids.includes(id)) {
+      return config.minutes;
+    }
+  }
+  return 0;
+}
+
 function countForSource(id, counts) {
   if (id === "chapter99") return counts.chapter99Rows || 0;
+  if (id === "forcedLabor301") return counts.forcedLabor301Rows || 0;
   if (id === "section122") return counts.section122Rows || 0;
   if (id === "section232") return counts.section232Rows || 0;
   if (id === "cotton") return counts.cottonRows || 0;
@@ -355,7 +436,7 @@ function countForSource(id, counts) {
 }
 
 function sourceOrder(id) {
-  return ["htsStatus", "chapter99", "section122", "section232", "cotton", "adcvdOfficial", "adcvdLocal", "translations"].indexOf(id);
+  return ["htsStatus", "chapter99", "forcedLabor301", "section122", "section232", "cotton", "adcvdOfficial", "adcvdLocal", "translations"].indexOf(id);
 }
 
 async function startServer() {

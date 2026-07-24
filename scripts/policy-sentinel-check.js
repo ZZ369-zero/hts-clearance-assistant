@@ -15,10 +15,11 @@ main().catch((error) => {
 });
 
 async function main() {
-  const [manifest, searchIndex, chapter99, section122, section232, cotton, adCvd] = await Promise.all([
+  const [manifest, searchIndex, chapter99, forcedLabor301, section122, section232, cotton, adCvd] = await Promise.all([
     readJson(path.join(dataDir, "manifest.json")),
     readJson(path.join(dataDir, "hts-search-index.json")),
     readJson(path.join(dataDir, "chapter99.json")),
+    readJson(path.join(dataDir, "forced-labor-301.json")),
     readJson(path.join(dataDir, "section122-exclusions.json")),
     readJson(path.join(dataDir, "section232.json")),
     readJson(path.join(dataDir, "cotton.json")),
@@ -26,6 +27,7 @@ async function main() {
   ]);
 
   checkManifest(manifest);
+  checkForcedLabor301(forcedLabor301);
   checkSection122Exclusions(section122);
   checkChapter99(chapter99);
   checkLaptop122Outcome(searchIndex, section122);
@@ -46,10 +48,26 @@ async function main() {
 
 function checkManifest(manifest) {
   const section122 = (manifest.sources || []).find((source) => source.id === "section122");
+  const forcedLabor301 = (manifest.sources || []).find((source) => source.id === "forcedLabor301");
   record(
     "manifest includes section122 source",
     Boolean(section122 && section122.state?.detail?.count >= 1500),
     section122 ? `count=${section122.state?.detail?.count || 0}` : "missing"
+  );
+  record(
+    "manifest includes forced labor 301 supplemental source",
+    Boolean(forcedLabor301 && forcedLabor301.state?.detail?.count >= 1),
+    forcedLabor301 ? `count=${forcedLabor301.state?.detail?.count || 0}` : "missing"
+  );
+}
+
+function checkForcedLabor301(forcedLabor301) {
+  const rows = forcedLabor301.chapter99Rows || [];
+  const rule = rows.find((row) => cleanHts(row.htsno) === "99030531");
+  record(
+    "forced labor 301 supplemental rule keeps China 9903.05.31 at +12.5%",
+    Boolean(rule && /\+ *12\.5%/.test(String(rule.general || "")) && forcedLabor301.country === "China"),
+    `9903.05.31=${rule?.general || "missing"}; country=${forcedLabor301.country || "missing"}`
   );
 }
 
