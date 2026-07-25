@@ -361,6 +361,10 @@ main {
   background: var(--blue);
 }
 
+.sync-status-pill.warning {
+  background: #b7791f;
+}
+
 .sync-status-pill.error {
   background: var(--red);
 }

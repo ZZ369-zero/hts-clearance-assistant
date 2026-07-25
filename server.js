@@ -19,6 +19,7 @@ const SECTION_232_MONITOR_URLS = [
 ];
 const SECTION_122_ANNEX_II_URL =
   "https://www.whitehouse.gov/wp-content/uploads/2026/02/2026Section122.prc_.ANNEX2_.Final_.pdf";
+const CBP_FORCED_LABOR_301_URL = "https://content.govdelivery.com/accounts/USDHSCBP/bulletins/421d887";
 const FORCED_LABOR_301_SOURCE_URL =
   "https://ustr.gov/sites/default/files/files/Press/Releases/2026/FLIP%20301%20Investigation%20Final%20Action%20FRN%207-23-26%20FINAL.pdf";
 const COTTON_ASSESSMENT_URL =
@@ -119,12 +120,20 @@ const syncSources = [
     description: "301、122、232 等 Chapter 99 税项基础数据。"
   },
   {
+    id: "policyRules",
+    name: "政策税项监控",
+    sourceName: "USTR / CBP / Federal Register",
+    url: "https://www.federalregister.gov/api/v1/documents.json",
+    intervalMs: 60 * 60 * 1000,
+    description: "自动监控新增政策税项、到期停用和待复核公告。"
+  },
+  {
     id: "forcedLabor301",
     name: "新301 强迫劳动税项",
-    sourceName: "USTR Section 301 Forced Labor Final Action",
-    url: FORCED_LABOR_301_SOURCE_URL,
+    sourceName: "CBP Section 301 Forced Labor Import Duties",
+    url: CBP_FORCED_LABOR_301_URL,
     intervalMs: 60 * 60 * 1000,
-    description: "补充 USITC 暂未入库的 9903.05.31 中国原产商品 12.5% 附加税。"
+    description: "由政策税项监控派生的 9903.05.31 中国原产商品 12.5% 兼容快照。"
   },
   {
     id: "section122",
@@ -1199,17 +1208,26 @@ async function runSyncTask(source, force = false) {
         force
       );
       detail = { count: getRows(data).length };
+    } else if (source.id === "policyRules") {
+      const snapshot = await loadPolicyRulesSnapshot();
+      detail = {
+        count: snapshot.rules?.length || 0,
+        alertCount: snapshot.alerts?.length || 0,
+        candidateCount: snapshot.candidates?.length || 0,
+        status: snapshot.status || "ok",
+        generatedAt: snapshot.generatedAt
+      };
     } else if (source.id === "forcedLabor301") {
       const snapshot = await loadForcedLabor301Snapshot();
-      const response = await fetch(FORCED_LABOR_301_SOURCE_URL, { method: "HEAD" });
+      const response = await fetch(CBP_FORCED_LABOR_301_URL, { method: "HEAD" });
       if (!response.ok) {
-        throw new Error(`USTR forced labor Section 301 source unavailable: ${response.status}`);
+        throw new Error(`CBP forced labor Section 301 source unavailable: ${response.status}`);
       }
       detail = {
         count: snapshot.chapter99Rows?.length || 0,
         effectiveFrom: snapshot.effectiveFrom,
         country: snapshot.country,
-        sourceUrl: snapshot.sourceUrl || FORCED_LABOR_301_SOURCE_URL,
+        sourceUrl: snapshot.sourceUrl || CBP_FORCED_LABOR_301_URL,
         sourceStatus: response.status
       };
     } else if (source.id === "section122") {
@@ -1262,6 +1280,26 @@ async function loadSection122ExclusionSnapshot() {
   };
 }
 
+async function loadPolicyRulesSnapshot() {
+  const filePath = path.join(publicDir, "data", "policy-rules.json");
+  try {
+    return JSON.parse(await readFile(filePath, "utf8"));
+  } catch {
+    const forcedLabor = await loadForcedLabor301Snapshot();
+    return {
+      generatedAt: forcedLabor.generatedAt || new Date().toISOString(),
+      status: "warning",
+      rules: [],
+      alerts: [{
+        severity: "warning",
+        title: "policy-rules.json 不存在",
+        message: "当前回退到 forced-labor-301.json 兼容快照。"
+      }],
+      supplementalChapter99Rows: forcedLabor.chapter99Rows || []
+    };
+  }
+}
+
 async function loadForcedLabor301Snapshot() {
   const filePath = path.join(publicDir, "data", "forced-labor-301.json");
   try {
@@ -1292,14 +1330,19 @@ function setSyncSuccess(id, detail = {}) {
   const source = syncSources.find((item) => item.id === id) || {};
   const state = {
     id,
-    status: "ok",
+    status: detail.status || "ok",
     lastSyncAt: new Date().toISOString(),
     nextSyncAt: source.intervalMs ? new Date(Date.now() + source.intervalMs).toISOString() : "",
-    message: "同步成功",
-    detail
+    message: detail.message || "同步成功",
+    detail: omitSyncDetailStateFields(detail)
   };
   syncState.set(id, state);
   return state;
+}
+
+function omitSyncDetailStateFields(detail) {
+  const { status, message, ...rest } = detail || {};
+  return rest;
 }
 
 function setSyncError(id, error) {
@@ -1520,6 +1563,8 @@ async function handleApi(req, res, url) {
     }
 
     const rows = [];
+    const policyRules = await loadPolicyRulesSnapshot();
+    const supplementalRows = getSupplementalChapter99Rows(policyRules);
     for (const code of codes) {
       const data = await usitcJson(
         `search?keyword=${encodeURIComponent(code)}`,
@@ -1531,7 +1576,7 @@ async function handleApi(req, res, url) {
       if (match) {
         rows.push(match);
       } else {
-        const supplemental = getSupplementalChapter99Row(code);
+        const supplemental = getSupplementalChapter99Row(code, supplementalRows);
         if (supplemental) {
           rows.push(supplemental);
         }
@@ -2936,8 +2981,18 @@ function normalizeRows(rows) {
   return normalized.map(applyKnownAdditionalDutyOverrides);
 }
 
-function getSupplementalChapter99Row(code) {
-  return forcedLabor301SupplementalRows.find((row) => cleanValue(row.htsno) === cleanValue(code)) || null;
+function getSupplementalChapter99Rows(policyRules = {}) {
+  const byCode = new Map();
+  for (const row of [...(policyRules.supplementalChapter99Rows || []), ...forcedLabor301SupplementalRows]) {
+    if (row?.htsno) {
+      byCode.set(cleanValue(row.htsno), row);
+    }
+  }
+  return [...byCode.values()];
+}
+
+function getSupplementalChapter99Row(code, supplementalRows = forcedLabor301SupplementalRows) {
+  return supplementalRows.find((row) => cleanValue(row.htsno) === cleanValue(code)) || null;
 }
 
 async function normalizeSearchRows(rows, query, force = false) {

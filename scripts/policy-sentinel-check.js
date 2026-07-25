@@ -15,10 +15,11 @@ main().catch((error) => {
 });
 
 async function main() {
-  const [manifest, searchIndex, chapter99, forcedLabor301, section122, section232, cotton, adCvd] = await Promise.all([
+  const [manifest, searchIndex, chapter99, policyRules, forcedLabor301, section122, section232, cotton, adCvd] = await Promise.all([
     readJson(path.join(dataDir, "manifest.json")),
     readJson(path.join(dataDir, "hts-search-index.json")),
     readJson(path.join(dataDir, "chapter99.json")),
+    readJson(path.join(dataDir, "policy-rules.json")),
     readJson(path.join(dataDir, "forced-labor-301.json")),
     readJson(path.join(dataDir, "section122-exclusions.json")),
     readJson(path.join(dataDir, "section232.json")),
@@ -27,6 +28,7 @@ async function main() {
   ]);
 
   checkManifest(manifest);
+  checkPolicyRules(policyRules);
   checkForcedLabor301(forcedLabor301);
   checkSection122Exclusions(section122);
   checkChapter99(chapter99);
@@ -48,6 +50,7 @@ async function main() {
 
 function checkManifest(manifest) {
   const section122 = (manifest.sources || []).find((source) => source.id === "section122");
+  const policyRules = (manifest.sources || []).find((source) => source.id === "policyRules");
   const forcedLabor301 = (manifest.sources || []).find((source) => source.id === "forcedLabor301");
   record(
     "manifest includes section122 source",
@@ -55,9 +58,31 @@ function checkManifest(manifest) {
     section122 ? `count=${section122.state?.detail?.count || 0}` : "missing"
   );
   record(
+    "manifest includes policy rule monitor source",
+    Boolean(policyRules && policyRules.state?.detail?.count >= 2),
+    policyRules ? `count=${policyRules.state?.detail?.count || 0}; alerts=${policyRules.state?.detail?.alertCount || 0}` : "missing"
+  );
+  record(
     "manifest includes forced labor 301 supplemental source",
     Boolean(forcedLabor301 && forcedLabor301.state?.detail?.count >= 1),
     forcedLabor301 ? `count=${forcedLabor301.state?.detail?.count || 0}` : "missing"
+  );
+}
+
+function checkPolicyRules(policyRules) {
+  const rules = policyRules.rules || [];
+  const forcedChina = rules.find((rule) => cleanHts(rule.code) === "99030531" && /^china$/i.test(rule.country || ""));
+  const section122 = rules.find((rule) => cleanHts(rule.code) === "99030301");
+  const referenceDate = new Date("2026-07-26T00:00:00Z");
+  record(
+    "policy-rules keeps China forced labor 301 active at +12.5%",
+    Boolean(forcedChina && Number(forcedChina.rate) === 12.5 && ruleStatusAt(forcedChina, referenceDate) === "active"),
+    forcedChina ? `code=${forcedChina.code}; rate=${forcedChina.rate}; status=${ruleStatusAt(forcedChina, referenceDate)}` : "missing"
+  );
+  record(
+    "policy-rules expires Section 122 after July 24 2026",
+    Boolean(section122 && ruleStatusAt(section122, referenceDate) === "expired"),
+    section122 ? `code=${section122.code}; status=${ruleStatusAt(section122, referenceDate)}; effectiveTo=${section122.effectiveTo || "none"}` : "missing"
   );
 }
 
@@ -203,6 +228,20 @@ function findPrefix(codes = [], hts) {
   return [...normalizeCodeSet(codes)]
     .sort((a, b) => b.length - a.length || a.localeCompare(b))
     .find((prefix) => digits === prefix || digits.startsWith(prefix)) || "";
+}
+
+function ruleStatusAt(rule, date) {
+  const start = parseDate(rule.effectiveFrom);
+  const end = parseDate(rule.effectiveTo);
+  if (start && date < start) return "upcoming";
+  if (end && date >= end) return "expired";
+  return "active";
+}
+
+function parseDate(value) {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
 }
 
 function normalizeCodeSet(codes = []) {

@@ -76,6 +76,7 @@ const state = {
   syncExpanded: false,
   lastQuery: "",
   lastChapter: "01",
+  policyRules: null,
   section122ExclusionPrefixes: [...section122FallbackExclusionPrefixes],
   section122ExclusionsSource: "内置 Annex II 兜底清单",
   chapters: []
@@ -307,6 +308,59 @@ const supplementalChapter99Rows = [
   }
 ];
 
+const fallbackPolicyRules = {
+  generatedAt: "",
+  status: "fallback",
+  defaultOriginCountry: "China",
+  rules: [
+    {
+      id: "section122-temporary-99030301",
+      program: "section122",
+      policyType: "temporarySurcharge",
+      group: "122",
+      label: "122-临时关税",
+      shortLabel: "122",
+      code: temporary122Policy.code,
+      rate: dutyRuleCatalog[temporary122Policy.code].rate,
+      country: "Any",
+      originCountries: ["Any"],
+      defaultApply: true,
+      autoApply: true,
+      effectiveFrom: temporary122Policy.effectiveFrom,
+      effectiveTo: temporary122Policy.effectiveTo,
+      sourceName: temporary122Policy.sourceName,
+      sourceUrl: temporary122Policy.sourceUrl,
+      summaryZh: dutyRuleCatalog[temporary122Policy.code].summaryZh,
+      exemptionStatus: dutyRuleCatalog[temporary122Policy.code].exemptionStatus,
+      note: dutyRuleCatalog[temporary122Policy.code].note,
+      chapter99Row: null
+    },
+    {
+      id: "section301-forced-labor-china-99030531",
+      program: "section301",
+      policyType: "forcedLabor",
+      group: "301",
+      label: "新301-强迫劳动",
+      shortLabel: "新301",
+      code: forcedLabor301Policy.code,
+      rate: dutyRuleCatalog[forcedLabor301Policy.code].rate,
+      country: forcedLabor301Policy.country,
+      originCountries: [forcedLabor301Policy.country],
+      defaultApply: true,
+      autoApply: true,
+      effectiveFrom: forcedLabor301Policy.effectiveFrom,
+      effectiveTo: "",
+      sourceName: forcedLabor301Policy.sourceName,
+      sourceUrl: forcedLabor301Policy.sourceUrl,
+      summaryZh: dutyRuleCatalog[forcedLabor301Policy.code].summaryZh,
+      exemptionStatus: dutyRuleCatalog[forcedLabor301Policy.code].exemptionStatus,
+      note: dutyRuleCatalog[forcedLabor301Policy.code].note,
+      chapter99Row: supplementalChapter99Rows[0]
+    }
+  ],
+  supplementalChapter99Rows
+};
+
 const vehiclePartsSection232Options = [
   {
     code: "9903.94.05",
@@ -344,7 +398,7 @@ async function init() {
   renderSearchHistory();
   setTransportMode(state.transportMode);
   setClearanceMode(state.clearanceMode);
-  await Promise.all([loadStatus(), loadChapters(), loadSyncStatus(), loadSection122Exclusions()]);
+  await Promise.all([loadStatus(), loadChapters(), loadSyncStatus(), loadPolicyRules(), loadSection122Exclusions()]);
   setInterval(loadSyncStatus, 60 * 1000);
   showSearchPrompt();
   calculate();
@@ -365,6 +419,27 @@ async function loadSection122Exclusions(force = false) {
   } catch (error) {
     console.warn(`Section 122 exclusion list unavailable: ${error.message}`);
   }
+}
+
+async function loadPolicyRules(force = false) {
+  try {
+    const data = await loadStaticData("policy-rules.json", force);
+    state.policyRules = normalizePolicyRulesSnapshot(data);
+  } catch (error) {
+    console.warn(`Policy rule monitor unavailable: ${error.message}`);
+    state.policyRules = normalizePolicyRulesSnapshot(fallbackPolicyRules);
+  }
+}
+
+function normalizePolicyRulesSnapshot(data = {}) {
+  return {
+    ...fallbackPolicyRules,
+    ...data,
+    rules: Array.isArray(data.rules) && data.rules.length ? data.rules : fallbackPolicyRules.rules,
+    supplementalChapter99Rows: Array.isArray(data.supplementalChapter99Rows) && data.supplementalChapter99Rows.length
+      ? data.supplementalChapter99Rows
+      : fallbackPolicyRules.supplementalChapter99Rows
+  };
 }
 
 function bindEvents() {
@@ -576,6 +651,7 @@ function renderSyncCard(source) {
   const status = stateInfo.status || "pending";
   const statusText = {
     ok: "正常",
+    warning: "待复核",
     running: "同步中",
     error: "异常",
     pending: "等待"
@@ -741,6 +817,7 @@ async function refreshData() {
   setLoading(true);
   try {
     await api("/api/refresh", { method: "POST" });
+    await loadPolicyRules(true);
     await loadSection122Exclusions(true);
     await loadStatus(true);
     await loadSyncStatus();
@@ -906,10 +983,11 @@ function buildAdditionalDutyRules(row, context = {}) {
         source: "USITC"
       });
     }
-    const catalog = dutyRuleCatalog[code] || inferDutyRuleByCode(code);
-    const temporary122Choice = code === "9903.03.01" ? getTemporary122Choice(row, context) : null;
-    const temporary122Inactive = code === "9903.03.01" ? getTemporary122Inactive(context) : null;
-    const temporary122Exemption = code === "9903.03.01" && !temporary122Choice && !temporary122Inactive
+    const policyRule = getPolicyRuleByCode(code);
+    const catalog = policyRuleToDutyCatalog(policyRule) || dutyRuleCatalog[code] || inferDutyRuleByCode(code);
+    const policyInactive = getPolicyInactiveMeta(policyRule, context);
+    const temporary122Choice = code === "9903.03.01" && !policyInactive ? getTemporary122Choice(row, context) : null;
+    const temporary122Exemption = code === "9903.03.01" && !temporary122Choice && !policyInactive
       ? getTemporary122Exemption(row, context)
       : null;
     return {
@@ -918,10 +996,10 @@ function buildAdditionalDutyRules(row, context = {}) {
       label: catalog.label || "Chapter 99 附加税",
       shortLabel: catalog.shortLabel || "CH99",
       rate: catalog.rate ?? null,
-      autoApply: temporary122Choice || temporary122Inactive || temporary122Exemption ? false : catalog.autoApply !== false,
-      summaryZh: temporary122Choice?.summaryZh || temporary122Inactive?.summaryZh || temporary122Exemption?.summaryZh || catalog.summaryZh,
-      exemptionStatus: temporary122Choice?.exemptionStatus || temporary122Inactive?.exemptionStatus || (temporary122Exemption ? "不计入" : catalog.exemptionStatus || "需确认"),
-      note: temporary122Choice?.note || temporary122Inactive?.note || temporary122Exemption?.note || catalog.note || "来自 USITC 脚注或常见附加税规则，需复核适用条件。",
+      autoApply: policyInactive || temporary122Choice || temporary122Exemption ? false : catalog.autoApply !== false,
+      summaryZh: policyInactive?.summaryZh || temporary122Choice?.summaryZh || temporary122Exemption?.summaryZh || catalog.summaryZh,
+      exemptionStatus: policyInactive?.exemptionStatus || temporary122Choice?.exemptionStatus || (temporary122Exemption ? "不计入" : catalog.exemptionStatus || "需确认"),
+      note: policyInactive?.note || temporary122Choice?.note || temporary122Exemption?.note || catalog.note || "来自 USITC 脚注或常见附加税规则，需复核适用条件。",
       exempt: Boolean(temporary122Exemption),
       exemptionCode: temporary122Exemption?.code || ""
     };
@@ -930,20 +1008,98 @@ function buildAdditionalDutyRules(row, context = {}) {
 
 function getDefaultAdditionalDutyCodes(context = {}) {
   const referenceDate = getPolicyReferenceDate(context);
-  const codes = [];
-  if (isPolicyActive(temporary122Policy, referenceDate)) {
-    codes.push(temporary122Policy.code);
+  return getPolicyRules()
+    .filter((rule) => rule.defaultApply !== false && rule.autoApply !== false)
+    .filter((rule) => isPolicyActive(rule, referenceDate))
+    .filter((rule) => matchesDefaultOriginCountry(rule))
+    .map((rule) => rule.code)
+    .filter(Boolean);
+}
+
+function getPolicyRules() {
+  return (state.policyRules?.rules?.length ? state.policyRules.rules : fallbackPolicyRules.rules) || [];
+}
+
+function getPolicyRuleByCode(code) {
+  return getPolicyRules().find((rule) => rule.code === code) || null;
+}
+
+function getSupplementalChapter99Rows(policyRules = state.policyRules || fallbackPolicyRules) {
+  const byCode = new Map();
+  for (const row of [
+    ...((policyRules && policyRules.supplementalChapter99Rows) || []),
+    ...supplementalChapter99Rows
+  ]) {
+    if (row?.htsno) {
+      byCode.set(row.htsno, row);
+    }
   }
-  if (isPolicyEffective(forcedLabor301Policy, referenceDate)) {
-    codes.push(forcedLabor301Policy.code);
+  return [...byCode.values()];
+}
+
+function policyRuleToDutyCatalog(rule) {
+  if (!rule) {
+    return null;
   }
-  return codes;
+  return {
+    group: rule.group || rule.program || "policy",
+    label: rule.label || "政策附加税",
+    shortLabel: rule.shortLabel || rule.group || "政策",
+    rate: rule.rate ?? null,
+    autoApply: rule.autoApply !== false,
+    summaryZh: rule.summaryZh || `${rule.label || "政策附加税"} ${rule.code || ""}，税率 ${rule.rate == null ? "需判断" : `+${formatRateNumber(rule.rate)}%`}。`,
+    exemptionStatus: rule.exemptionStatus || "条件适用",
+    note: rule.note || `${rule.sourceName || "官方政策源"}；请按申报日期、原产国和排除项复核。`
+  };
+}
+
+function matchesDefaultOriginCountry(rule) {
+  const origin = state.policyRules?.defaultOriginCountry || fallbackPolicyRules.defaultOriginCountry || "China";
+  const countries = rule.originCountries || [rule.country || ""];
+  return countries.some((country) => !country || /^any$/i.test(country) || String(country).toLowerCase() === String(origin).toLowerCase());
+}
+
+function getPolicyInactiveMeta(rule, context = {}) {
+  if (!rule) {
+    return null;
+  }
+  const referenceDate = getPolicyReferenceDate(context);
+  const start = parsePolicyDate(rule.effectiveFrom);
+  const end = parsePolicyDate(rule.effectiveTo);
+  if (start && referenceDate < start) {
+    return {
+      exemptionStatus: "未生效",
+      summaryZh: `${rule.label || "政策税项"} ${rule.code || ""} 尚未生效，当前不计入估算。`,
+      note: `${rule.sourceName || "官方政策源"} 显示生效时间为 ${formatPolicyDate(rule.effectiveFrom)}。`
+    };
+  }
+  if (end && referenceDate >= end) {
+    return {
+      exemptionStatus: "已截止",
+      summaryZh: `${rule.label || "政策税项"} ${rule.code || ""} 适用期已截止，当前不计入估算。`,
+      note: `${rule.sourceName || "官方政策源"} 显示截止时间为 ${formatPolicyDate(rule.effectiveTo)}。`
+    };
+  }
+  return null;
 }
 
 function getPolicyReferenceDate(context = {}) {
   const value = context.entryDate || context.referenceDate || "";
   const date = value ? new Date(value) : new Date();
   return Number.isNaN(date.getTime()) ? new Date() : date;
+}
+
+function parsePolicyDate(value) {
+  if (!value) {
+    return null;
+  }
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function formatPolicyDate(value) {
+  const date = parsePolicyDate(value);
+  return date ? date.toISOString().replace("T", " ").replace(".000Z", " UTC") : "--";
 }
 
 function isPolicyEffective(policy, date = new Date()) {
@@ -2350,7 +2506,9 @@ async function staticApi(path, options = {}) {
     const chapter99 = await loadStaticData("chapter99.json");
     const rows = (chapter99.value || []).filter((row) => codes.includes(row.htsno));
     const rowCodes = new Set(rows.map((row) => row.htsno));
-    rows.push(...supplementalChapter99Rows.filter((row) => codes.includes(row.htsno) && !rowCodes.has(row.htsno)));
+    const policyRules = await loadStaticData("policy-rules.json").catch(() => state.policyRules || fallbackPolicyRules);
+    const supplementalRows = getSupplementalChapter99Rows(policyRules);
+    rows.push(...supplementalRows.filter((row) => codes.includes(row.htsno) && !rowCodes.has(row.htsno)));
     return { count: rows.length, value: rows };
   }
 

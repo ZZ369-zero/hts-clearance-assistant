@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { buildLegacyForcedLabor301Snapshot, buildPolicyRulesSnapshot } from "./policy-rule-monitor.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, "..");
@@ -12,45 +13,15 @@ const port = Number(process.env.STATIC_EXPORT_PORT || 4183);
 const baseUrl = process.env.STATIC_EXPORT_BASE_URL || `http://127.0.0.1:${port}`;
 const scope = getArgValue("--scope") || process.env.STATIC_EXPORT_SCOPE || "all";
 const now = new Date().toISOString();
-const forcedLabor301SourceUrl =
-  "https://ustr.gov/sites/default/files/files/Press/Releases/2026/FLIP%20301%20Investigation%20Final%20Action%20FRN%207-23-26%20FINAL.pdf";
-
-const forcedLabor301Snapshot = {
-  generatedAt: now,
-  sourceName: "USTR Section 301 Forced Labor Final Action",
-  sourceUrl: forcedLabor301SourceUrl,
-  effectiveFrom: "2026-07-24T04:01:00.000Z",
-  country: "China",
-  rate: 12.5,
-  chapter99Rows: [
-    {
-      htsno: "9903.05.31",
-      statisticalSuffix: "",
-      description: "Except for products described in headings 9903.05.85-9903.05.92, articles the product of China, as provided for in U.S. note 52 to this subchapter",
-      descriptionEn: "Except for products described in headings 9903.05.85-9903.05.92, articles the product of China, as provided for in U.S. note 52 to this subchapter",
-      descriptionZh: "除 9903.05.85-9903.05.92 所列产品外，中国原产商品按美国注释 52 适用新301强迫劳动附加税。",
-      indent: 0,
-      units: [],
-      general: "The duty provided in the applicable subheading + 12.5%",
-      special: "The duty provided in the applicable subheading + 12.5%",
-      other: "The duty provided in the applicable subheading + 12.5%",
-      additionalDuties: "",
-      additionalDutyCodes: [],
-      quotaQuantity: "",
-      effectivePeriod: "Effective for covered goods entered for consumption on or after 2026-07-24 00:01 EDT.",
-      footnotes: [],
-      superior: false,
-      unique: false,
-      status: "",
-      sourceName: "USTR Section 301 Forced Labor Final Action",
-      sourceUrl: forcedLabor301SourceUrl
-    }
-  ]
-};
+const forcedLabor301SourceUrl = "https://content.govdelivery.com/accounts/USDHSCBP/bulletins/421d887";
 
 const syncSourceConfig = {
   hts: {
     ids: ["htsStatus", "chapter99"],
+    minutes: 60
+  },
+  policyRules: {
+    ids: ["policyRules"],
     minutes: 60
   },
   forcedLabor301: {
@@ -82,7 +53,8 @@ const syncSourceConfig = {
 const sourceLabels = {
   htsStatus: ["USITC HTS version", "USITC HTS", "Official HTS release and revision information.", "https://hts.usitc.gov/"],
   chapter99: ["Chapter 99 additional duties", "USITC HTS Chapter 99", "301, 122, 232 and other Chapter 99 rows.", "https://hts.usitc.gov/reststop/exportList?from=9900&to=9999&format=JSON&styles=false"],
-  forcedLabor301: ["New 301 forced labor duty", "USTR Section 301 Forced Labor Final Action", "Supplemental 9903.05.31 rule while USITC Chapter 99 catches up.", forcedLabor301SourceUrl],
+  policyRules: ["Policy duty monitor", "USTR / CBP / Federal Register", "Automatically monitors new and expired policy duty rules.", "https://www.federalregister.gov/api/v1/documents.json"],
+  forcedLabor301: ["New 301 forced labor duty", "CBP Section 301 Forced Labor Import Duties", "Compatibility snapshot derived from policy-rules.json for 9903.05.31.", forcedLabor301SourceUrl],
   section122: ["122 Annex II exclusions", "White House Section 122 Annex II", "Section 122 Annex II HTS exclusion prefixes used to avoid applying 9903.03.01 to excluded goods.", "https://www.whitehouse.gov/wp-content/uploads/2026/02/2026Section122.prc_.ANNEX2_.Final_.pdf"],
   section232: ["232 Metals HTS List", "CBP / GovDelivery Metals HTS List", "CBP Metals HTS List discovery and parsed entries.", "https://www.cbp.gov/trade/programs-administration/trade-remedies"],
   cotton: ["Cotton Import Assessment", "eCFR 7 CFR 1205", "Cotton import assessment table.", "https://www.ecfr.gov/current/title-7/subtitle-B/chapter-XI/part-1205/subpart-ECFR80efc31412f8612"],
@@ -118,6 +90,9 @@ async function main() {
 
     if (selected.includes("hts")) {
       await exportHts(manifest);
+    }
+    if (selected.includes("policyRules")) {
+      await exportPolicyRules(manifest);
     }
     if (selected.includes("forcedLabor301")) {
       await exportForcedLabor301(manifest);
@@ -224,12 +199,48 @@ async function exportSection232(manifest) {
   });
 }
 
+async function exportPolicyRules(manifest) {
+  console.log("Exporting policy duty monitor rules...");
+  const old = await readJsonSafe(path.join(dataDir, "policy-rules.json"), null);
+  const data = await buildPolicyRulesSnapshot({ now: new Date(now), previous: old }).catch((error) => {
+    if (old?.rules?.length) {
+      console.warn(`Policy rule monitor failed, keeping previous snapshot: ${error.message}`);
+      return {
+        ...old,
+        generatedAt: now,
+        status: "warning",
+        retainedPreviousRules: true,
+        alerts: [
+          ...(old.alerts || []),
+          {
+            severity: "warning",
+            title: "政策税项监控抓取失败",
+            message: error.message,
+            sourceUrl: sourceLabels.policyRules[3]
+          }
+        ]
+      };
+    }
+    throw error;
+  });
+  await writeJson(path.join(dataDir, "policy-rules.json"), data);
+  manifest.counts = { ...(manifest.counts || {}), policyRuleRows: data.rules?.length || 0 };
+  setSourceState(manifest, "policyRules", {
+    status: data.status === "ok" ? "ok" : "warning",
+    message: data.alerts?.length ? `发现 ${data.alerts.length} 条政策监控提示` : "Policy monitor updated",
+    count: data.rules?.length || 0,
+    alertCount: data.alerts?.length || 0,
+    candidateCount: data.candidates?.length || 0,
+    sourceCount: data.sources?.length || 0,
+    fetchedAt: data.generatedAt || now
+  });
+}
+
 async function exportForcedLabor301(manifest) {
   console.log("Exporting forced labor Section 301 supplemental rule...");
-  const data = {
-    ...forcedLabor301Snapshot,
-    generatedAt: now
-  };
+  const policyRules = await readJsonSafe(path.join(dataDir, "policy-rules.json"), null)
+    || await buildPolicyRulesSnapshot({ now: new Date(now) });
+  const data = buildLegacyForcedLabor301Snapshot(policyRules, { generatedAt: now });
   await writeJson(path.join(dataDir, "forced-labor-301.json"), data);
   manifest.counts = { ...(manifest.counts || {}), forcedLabor301Rows: data.chapter99Rows?.length || 0 };
   setSourceState(manifest, "forcedLabor301", {
@@ -347,7 +358,7 @@ async function exportTranslations(manifest) {
 
 function expandScope(value) {
   if (!value || value === "all") {
-    return ["hts", "forcedLabor301", "section122", "section232", "cotton", "adcvd", "translations"];
+    return ["hts", "policyRules", "forcedLabor301", "section122", "section232", "cotton", "adcvd", "translations"];
   }
   return [...new Set(String(value).split(",").map((item) => item.trim()).filter(Boolean))];
 }
@@ -405,14 +416,19 @@ function setSourceState(manifest, id, detail) {
   }
   source.state = {
     ...(source.state || {}),
-    status: "ok",
-    message: "Static snapshot updated",
+    status: detail.status || "ok",
+    message: detail.message || "Static snapshot updated",
     lastSyncAt: detail.fetchedAt || now,
     detail: {
       ...((source.state || {}).detail || {}),
-      ...detail
+      ...omitStateFields(detail)
     }
   };
+}
+
+function omitStateFields(detail) {
+  const { status, message, ...rest } = detail || {};
+  return rest;
 }
 
 function intervalMinutesForSource(id) {
@@ -426,6 +442,7 @@ function intervalMinutesForSource(id) {
 
 function countForSource(id, counts) {
   if (id === "chapter99") return counts.chapter99Rows || 0;
+  if (id === "policyRules") return counts.policyRuleRows || 0;
   if (id === "forcedLabor301") return counts.forcedLabor301Rows || 0;
   if (id === "section122") return counts.section122Rows || 0;
   if (id === "section232") return counts.section232Rows || 0;
@@ -436,7 +453,7 @@ function countForSource(id, counts) {
 }
 
 function sourceOrder(id) {
-  return ["htsStatus", "chapter99", "forcedLabor301", "section122", "section232", "cotton", "adcvdOfficial", "adcvdLocal", "translations"].indexOf(id);
+  return ["htsStatus", "chapter99", "policyRules", "forcedLabor301", "section122", "section232", "cotton", "adcvdOfficial", "adcvdLocal", "translations"].indexOf(id);
 }
 
 async function startServer() {
