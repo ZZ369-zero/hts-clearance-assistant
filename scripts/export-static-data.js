@@ -30,6 +30,10 @@ const syncSourceConfig = {
     ids: ["forcedLabor301"],
     minutes: 60
   },
+  forcedLaborExemptions: {
+    ids: ["forcedLaborExemptions"],
+    minutes: 60
+  },
   section122: {
     ids: ["section122"],
     minutes: 1440
@@ -61,6 +65,7 @@ const sourceLabels = {
   chapter99: ["Chapter 99 additional duties", "USITC HTS Chapter 99", "301, 122, 232 and other Chapter 99 rows.", "https://hts.usitc.gov/reststop/exportList?from=9900&to=9999&format=JSON&styles=false"],
   policyRules: ["Policy duty monitor", "USTR / CBP / Federal Register", "Automatically monitors new and expired policy duty rules.", "https://www.federalregister.gov/api/v1/documents.json"],
   forcedLabor301: ["New 301 forced labor duty", "CBP Section 301 Forced Labor Import Duties", "Compatibility snapshot derived from policy-rules.json for 9903.05.31.", forcedLabor301SourceUrl],
+  forcedLaborExemptions: ["新301排除清单", "CBP Forced Labor HTS List", "解析9903.05.85-9903.05.92排除规则，统计有效、到期、精确HTS及条件类项目。", forcedLabor301SourceUrl],
   section122: ["122 Annex II exclusions", "White House Section 122 Annex II", "Section 122 Annex II HTS exclusion prefixes used to avoid applying 9903.03.01 to excluded goods.", "https://www.whitehouse.gov/wp-content/uploads/2026/02/2026Section122.prc_.ANNEX2_.Final_.pdf"],
   section232: ["232 Metals HTS List", "CBP / GovDelivery Metals HTS List", "CBP Metals HTS List discovery and parsed entries.", "https://www.cbp.gov/trade/programs-administration/trade-remedies"],
   cotton: ["Cotton Import Assessment", "eCFR 7 CFR 1205", "Cotton import assessment table.", "https://www.ecfr.gov/current/title-7/subtitle-B/chapter-XI/part-1205/subpart-ECFR80efc31412f8612"],
@@ -103,6 +108,9 @@ async function main() {
     }
     if (selected.includes("forcedLabor301")) {
       await exportForcedLabor301(manifest);
+    }
+    if (selected.includes("forcedLaborExemptions")) {
+      await exportForcedLaborExemptions(manifest);
     }
     if (selected.includes("section122")) {
       await exportSection122(manifest);
@@ -259,6 +267,65 @@ async function exportForcedLabor301(manifest) {
     effectiveFrom: data.effectiveFrom,
     country: data.country,
     fetchedAt: data.generatedAt
+  });
+}
+
+async function exportForcedLaborExemptions(manifest) {
+  console.log("Exporting CBP forced-labor Section 301 exclusions...");
+  const filePath = path.join(dataDir, "forced-labor-exemptions.json");
+  const old = await readJsonSafe(filePath, null);
+  let data;
+
+  try {
+    const pythonCommand = process.env.PYTHON || "python";
+    const parserPath = path.join(__dirname, "parse-forced-labor-exemptions.py");
+    const result = await execFileAsync(pythonCommand, [parserPath], {
+      cwd: rootDir,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        PYTHONIOENCODING: "utf-8"
+      },
+      maxBuffer: 32 * 1024 * 1024,
+      timeout: 4 * 60 * 1000
+    });
+    data = JSON.parse(result.stdout);
+  } catch (error) {
+    if (!old?.rules?.["9903.05.86"]?.codes?.length) {
+      throw error;
+    }
+    console.warn(`Forced-labor exclusion export failed, keeping previous snapshot: ${error.message}`);
+    data = {
+      ...old,
+      retainedPreviousRows: true,
+      warning: error.message
+    };
+  }
+
+  if (!data.rules?.["9903.05.86"]?.codes?.includes("8524.91.10")) {
+    throw new Error("Forced-labor exclusion export failed sentinel: 8524.91.10 is missing from 9903.05.86.");
+  }
+  if (data.rules?.["9903.05.85"]?.effectiveTo !== "2026-07-28T04:01:00.000Z") {
+    throw new Error("Forced-labor exclusion export failed sentinel: 9903.05.85 expiry is incorrect.");
+  }
+
+  await writeJson(filePath, data);
+  const stats = data.statistics || {};
+  manifest.counts = {
+    ...(manifest.counts || {}),
+    forcedLaborExemptionCodes: stats.exactExclusionCodes || 0,
+    forcedLaborExemptionActiveRules: stats.activeRules || 0,
+    forcedLaborExemptionExpiredRules: stats.expiredRules || 0
+  };
+  setSourceState(manifest, "forcedLaborExemptions", {
+    count: stats.exactExclusionCodes || 0,
+    activeRules: stats.activeRules || 0,
+    expiredRules: stats.expiredRules || 0,
+    expiredRule: "9903.05.85 截止 2026-07-28",
+    particularArticles: stats.particularArticles || 0,
+    conditionalHtsCodes: stats.conditionalHtsCodes || 0,
+    pdfUrl: data.pdfUrl,
+    fetchedAt: data.generatedAt || now
   });
 }
 
@@ -422,7 +489,7 @@ async function exportTranslations(manifest) {
 
 function expandScope(value) {
   if (!value || value === "all") {
-    return ["hts", "policyRules", "forcedLabor301", "section122", "section232", "cotton", "adcvd", "fdaFlags", "translations"];
+    return ["hts", "policyRules", "forcedLabor301", "forcedLaborExemptions", "section122", "section232", "cotton", "adcvd", "fdaFlags", "translations"];
   }
   return [...new Set(String(value).split(",").map((item) => item.trim()).filter(Boolean))];
 }
@@ -508,6 +575,7 @@ function countForSource(id, counts) {
   if (id === "chapter99") return counts.chapter99Rows || 0;
   if (id === "policyRules") return counts.policyRuleRows || 0;
   if (id === "forcedLabor301") return counts.forcedLabor301Rows || 0;
+  if (id === "forcedLaborExemptions") return counts.forcedLaborExemptionCodes || 0;
   if (id === "section122") return counts.section122Rows || 0;
   if (id === "section232") return counts.section232Rows || 0;
   if (id === "cotton") return counts.cottonRows || 0;
@@ -518,7 +586,7 @@ function countForSource(id, counts) {
 }
 
 function sourceOrder(id) {
-  return ["htsStatus", "chapter99", "policyRules", "forcedLabor301", "section122", "section232", "cotton", "adcvdOfficial", "adcvdLocal", "fdaFlags", "translations"].indexOf(id);
+  return ["htsStatus", "chapter99", "policyRules", "forcedLabor301", "forcedLaborExemptions", "section122", "section232", "cotton", "adcvdOfficial", "adcvdLocal", "fdaFlags", "translations"].indexOf(id);
 }
 
 async function startServer() {

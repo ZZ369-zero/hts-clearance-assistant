@@ -2,6 +2,13 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { matchCertificationRules } from "../public/certification-rule-engine.js";
+import {
+  getPreferredDescriptionZh,
+  isUsableChineseDescription
+} from "../public/description-helper.js";
+import {
+  matchForcedLaborExemptions
+} from "../public/forced-labor-exemption-engine.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, "..");
@@ -15,12 +22,13 @@ main().catch((error) => {
 });
 
 async function main() {
-  const [manifest, searchIndex, chapter99, policyRules, forcedLabor301, section122, section232, cotton, adCvd, fdaFlags] = await Promise.all([
+  const [manifest, searchIndex, chapter99, policyRules, forcedLabor301, forcedLaborExemptions, section122, section232, cotton, adCvd, fdaFlags] = await Promise.all([
     readJson(path.join(dataDir, "manifest.json")),
     readJson(path.join(dataDir, "hts-search-index.json")),
     readJson(path.join(dataDir, "chapter99.json")),
     readJson(path.join(dataDir, "policy-rules.json")),
     readJson(path.join(dataDir, "forced-labor-301.json")),
+    readJson(path.join(dataDir, "forced-labor-exemptions.json")),
     readJson(path.join(dataDir, "section122-exclusions.json")),
     readJson(path.join(dataDir, "section232.json")),
     readJson(path.join(dataDir, "cotton.json")),
@@ -31,6 +39,8 @@ async function main() {
   checkManifest(manifest);
   checkPolicyRules(policyRules);
   checkForcedLabor301(forcedLabor301);
+  checkForcedLaborExemptions(forcedLaborExemptions);
+  checkDescriptionHelpers();
   checkSection122Exclusions(section122);
   checkChapter99(chapter99);
   checkLaptop122Outcome(searchIndex, section122);
@@ -54,6 +64,7 @@ function checkManifest(manifest) {
   const section122 = (manifest.sources || []).find((source) => source.id === "section122");
   const policyRules = (manifest.sources || []).find((source) => source.id === "policyRules");
   const forcedLabor301 = (manifest.sources || []).find((source) => source.id === "forcedLabor301");
+  const forcedLaborExemptions = (manifest.sources || []).find((source) => source.id === "forcedLaborExemptions");
   const fdaFlags = (manifest.sources || []).find((source) => source.id === "fdaFlags");
   record(
     "manifest includes section122 source",
@@ -69,6 +80,19 @@ function checkManifest(manifest) {
     "manifest includes forced labor 301 supplemental source",
     Boolean(forcedLabor301 && forcedLabor301.state?.detail?.count >= 1),
     forcedLabor301 ? `count=${forcedLabor301.state?.detail?.count || 0}` : "missing"
+  );
+  record(
+    "manifest includes forced labor 301 exclusion statistics",
+    Boolean(
+      forcedLaborExemptions
+      && forcedLaborExemptions.state?.detail?.count >= 800
+      && forcedLaborExemptions.state?.detail?.activeRules === 7
+      && forcedLaborExemptions.state?.detail?.expiredRules === 1
+      && forcedLaborExemptions.state?.detail?.expiredRule === "9903.05.85 截止 2026-07-28"
+    ),
+    forcedLaborExemptions
+      ? `count=${forcedLaborExemptions.state?.detail?.count || 0}; active=${forcedLaborExemptions.state?.detail?.activeRules || 0}; expired=${forcedLaborExemptions.state?.detail?.expiredRules || 0}`
+      : "missing"
   );
   record(
     "manifest includes FDA FD flag source",
@@ -101,6 +125,57 @@ function checkForcedLabor301(forcedLabor301) {
     "forced labor 301 supplemental rule keeps China 9903.05.31 at +12.5%",
     Boolean(rule && /\+ *12\.5%/.test(String(rule.general || "")) && forcedLabor301.country === "China"),
     `9903.05.31=${rule?.general || "missing"}; country=${forcedLabor301.country || "missing"}`
+  );
+}
+
+function checkForcedLaborExemptions(snapshot) {
+  const match = matchForcedLaborExemptions("8524911000", snapshot, {
+    referenceDate: new Date("2026-07-29T00:00:00Z")
+  });
+  const transitRule = snapshot.rules?.["9903.05.85"];
+  const currentRulesWithoutDates = Object.values(snapshot.rules || {})
+    .filter((rule) => rule.code !== "9903.05.85" && rule.effectiveTo);
+
+  record(
+    "8524911000 automatically resolves to 9903.05.86 exclusion",
+    Boolean(match.exact?.code === "9903.05.86" && match.exact.autoExempt),
+    `exact=${match.exact?.code || "none"}; possible=${match.possible.map((item) => item.code).join(",") || "none"}`
+  );
+  record(
+    "9903.05.85 keeps real July 28 expiry and is archived",
+    Boolean(
+      transitRule?.effectiveTo === "2026-07-28T04:01:00.000Z"
+      && match.expired.some((item) => item.code === "9903.05.85")
+    ),
+    `effectiveTo=${transitRule?.effectiveTo || "missing"}; status=${transitRule?.status || "missing"}`
+  );
+  record(
+    "open-ended forced labor exclusions do not use fake 2099 expiry",
+    currentRulesWithoutDates.length === 0,
+    `unexpectedExpiry=${currentRulesWithoutDates.map((rule) => `${rule.code}:${rule.effectiveTo}`).join(",") || "none"}`
+  );
+}
+
+function checkDescriptionHelpers() {
+  const printer = getPreferredDescriptionZh({
+    htsno: "8443.31.00.00",
+    description: "Machines which perform two or more of the functions of printing, copying or facsimile transmission, capable of connecting to an automatic data processing machine or to a network",
+    descriptionZh: "机器具 perform two 及以上 functions of printing"
+  });
+  const displayModule = getPreferredDescriptionZh({
+    htsno: "8524.91.10.00",
+    description: "Flat panel display modules, other than flat panel display modules for articles of subheadings 8528.59, 8528.69, 8528.72 and 8528.73",
+    descriptionZh: "LED显示屏，除...以外 LED显示屏供制品 of subheadings"
+  });
+  record(
+    "8443310000 uses exact Chinese leaf description",
+    isUsableChineseDescription(printer) && /打印、复印或传真/.test(printer),
+    printer
+  );
+  record(
+    "8524911000 uses flat panel display module terminology",
+    isUsableChineseDescription(displayModule) && displayModule.startsWith("平板显示模组") && !displayModule.startsWith("LED显示屏"),
+    displayModule
   );
 }
 

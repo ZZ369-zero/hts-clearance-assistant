@@ -758,6 +758,50 @@ tbody tr.selected td:first-child {
   line-height: 1.55;
 }
 
+.classification-path {
+  margin: -4px 0 14px;
+  border-top: 1px solid #dce5ec;
+  border-bottom: 1px solid #dce5ec;
+  padding: 8px 0;
+}
+
+.classification-path summary {
+  cursor: pointer;
+  color: var(--blue);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.classification-path ol {
+  display: grid;
+  gap: 7px;
+  margin: 9px 0 2px;
+  padding-left: 22px;
+}
+
+.classification-path li {
+  padding-left: 3px;
+  color: #526372;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.classification-path li span,
+.classification-path li strong,
+.classification-path li small {
+  display: block;
+}
+
+.classification-path li span {
+  color: var(--blue);
+  font-weight: 900;
+}
+
+.classification-path li strong {
+  color: var(--ink);
+  font-size: 13px;
+}
+
 .customs-info-card {
   margin-top: 12px;
   border: 1px solid #dce5ec;
@@ -945,6 +989,37 @@ tbody tr.selected td:first-child {
   color: var(--ink);
   font-size: 14px;
   line-height: 1.45;
+}
+
+.forced-labor-exemption-detail {
+  grid-column: 1 / -1;
+  border-left: 3px solid #2e7d67;
+  padding: 5px 0 3px 9px;
+  color: #334b43;
+  font-size: 12px;
+}
+
+.forced-labor-exemption-detail summary {
+  cursor: pointer;
+  font-weight: 900;
+}
+
+.forced-labor-exemption-detail ul {
+  display: grid;
+  gap: 7px;
+  margin: 8px 0;
+  padding-left: 18px;
+}
+
+.forced-labor-exemption-detail li span,
+.forced-labor-exemption-detail li small {
+  display: block;
+  line-height: 1.4;
+}
+
+.forced-labor-exemption-detail a {
+  color: var(--blue);
+  font-weight: 800;
 }
 
 .restriction-main {

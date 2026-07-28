@@ -11,6 +11,14 @@ import {
   matchCertificationRules,
   summarizeCertificationMatches
 } from "./certification-rule-engine.js?v=20260728-fda-flags";
+import {
+  buildClassificationCandidates,
+  getPreferredDescriptionZh,
+  isUsableChineseDescription
+} from "./description-helper.js?v=20260729-description-levels";
+import {
+  matchForcedLaborExemptions
+} from "./forced-labor-exemption-engine.js?v=20260729-exemptions";
 
 const section122FallbackExclusionPrefixes = [
   "84713001",
@@ -77,6 +85,7 @@ const state = {
   lastQuery: "",
   lastChapter: "01",
   policyRules: null,
+  forcedLaborExemptions: null,
   fdaFlags: null,
   section122ExclusionPrefixes: [...section122FallbackExclusionPrefixes],
   section122ExclusionsSource: "内置 Annex II 兜底清单",
@@ -121,6 +130,8 @@ const els = {
   emptyState: document.querySelector("#emptyState"),
   selectedCode: document.querySelector("#selectedCode"),
   selectedDescription: document.querySelector("#selectedDescription"),
+  classificationPath: document.querySelector("#classificationPath"),
+  classificationPathList: document.querySelector("#classificationPathList"),
   miniHsCode: document.querySelector("#miniHsCode"),
   miniProductDescription: document.querySelector("#miniProductDescription"),
   effectiveRate: document.querySelector("#effectiveRate"),
@@ -404,6 +415,7 @@ async function init() {
     loadChapters(),
     loadSyncStatus(),
     loadPolicyRules(),
+    loadForcedLaborExemptions(),
     loadFdaFlags(),
     loadSection122Exclusions()
   ]);
@@ -436,6 +448,16 @@ async function loadPolicyRules(force = false) {
   } catch (error) {
     console.warn(`Policy rule monitor unavailable: ${error.message}`);
     state.policyRules = normalizePolicyRulesSnapshot(fallbackPolicyRules);
+  }
+}
+
+async function loadForcedLaborExemptions(force = false) {
+  try {
+    const data = await loadStaticData("forced-labor-exemptions.json", force);
+    state.forcedLaborExemptions = data?.rules ? data : null;
+  } catch (error) {
+    state.forcedLaborExemptions = null;
+    console.warn(`Forced-labor Section 301 exclusions unavailable: ${error.message}`);
   }
 }
 
@@ -676,7 +698,10 @@ function renderSyncCard(source) {
   }[status] || status;
   const link = detail.url || source.url;
   const count = detail.count != null ? `记录数：${detail.count}` : "";
-  const extra = detail.release || detail.title || detail.effectiveNote || detail.mode || "";
+  const ruleStats = detail.activeRules != null
+    ? `有效规则：${detail.activeRules} / 已到期：${detail.expiredRules || 0}${detail.expiredRule ? `（${detail.expiredRule}）` : ""} / 特定商品：${detail.particularArticles || 0}`
+    : "";
+  const extra = ruleStats || detail.release || detail.title || detail.effectiveNote || detail.mode || "";
 
   return `
     <article class="sync-source-card">
@@ -693,6 +718,7 @@ function renderSyncCard(source) {
         <span>下次自动：${escapeHtml(formatTime(stateInfo.nextSyncAt))}</span>
         <span>${escapeHtml([count, extra].filter(Boolean).join(" / ") || stateInfo.message || "--")}</span>
         ${link ? `<a href="${escapeHtml(link)}" target="_blank" rel="noreferrer">打开来源链接</a>` : ""}
+        ${detail.pdfUrl ? `<a href="${escapeHtml(detail.pdfUrl)}" target="_blank" rel="noreferrer">打开CBP HTS排除清单</a>` : ""}
       </div>
       <div class="sync-card-actions">
         <small>周期：约 ${escapeHtml(String(source.intervalMinutes || "--"))} 分钟</small>
@@ -788,7 +814,7 @@ async function search(query, force = false) {
   setLoading(true);
   try {
     const data = await api(`/api/search?q=${encodeURIComponent(query)}${force ? "&refresh=1" : ""}`);
-    state.rows = data.value || [];
+    state.rows = await attachClassificationPaths(data.value || [], force);
     state.visibleRows = state.rows;
     state.dataKind = "search";
     saveSearchHistory(query);
@@ -814,7 +840,7 @@ async function loadChapter(chapter, force = false) {
   setLoading(true);
   try {
     const data = await api(`/api/chapter?chapter=${encodeURIComponent(chapter)}${force ? "&refresh=1" : ""}`);
-    state.rows = data.value || [];
+    state.rows = buildStaticSearchCandidates(data.value || []).map((candidate) => candidate.row);
     state.visibleRows = state.rows;
     state.dataKind = "chapter";
     const title = state.chapters.find(([code]) => code === chapter)?.[1] || "HTS chapter";
@@ -836,6 +862,7 @@ async function refreshData() {
   try {
     await api("/api/refresh", { method: "POST" });
     await loadPolicyRules(true);
+    await loadForcedLaborExemptions(true);
     await loadFdaFlags(true);
     await loadSection122Exclusions(true);
     await loadStatus(true);
@@ -867,16 +894,17 @@ function filterChapterRows() {
 
 async function enhanceSearchResultTranslations(rows) {
   const requestId = ++state.translationRequestId;
-  const descriptions = [...new Set(rows
+  const descriptionRows = rows.flatMap((row) => [row, ...(row.classificationPath || [])]);
+  const descriptions = [...new Set(descriptionRows
     .filter(needsTranslationEnhancement)
     .map((row) => row.description)
-    .filter(Boolean))].slice(0, 80);
+    .filter(Boolean))].slice(0, 40);
 
   if (!descriptions.length) {
     return;
   }
 
-  await mapLimit(descriptions, 3, async (description) => {
+  await mapLimit(descriptions, 1, async (description) => {
     try {
       const data = await api(`/api/translate-description?text=${encodeURIComponent(description)}`);
       if (requestId !== state.translationRequestId || !data.translation) {
@@ -890,23 +918,17 @@ async function enhanceSearchResultTranslations(rows) {
 }
 
 function needsTranslationEnhancement(row) {
-  const zh = row.descriptionZh || "";
-  if (!row.description || !zh) {
-    return Boolean(row.description);
-  }
-  return !hasChineseText(zh) || /[A-Za-z]{2,}/.test(zh) || zh.includes("中文释义待核");
+  return Boolean(row.description) && !getPreferredDescriptionZh(row);
 }
 
 function applyDescriptionTranslation(description, translation) {
   const cleaned = String(translation || "").trim();
-  if (!cleaned) {
+  if (!isUsableChineseDescription(cleaned)) {
     return;
   }
 
   for (const row of state.rows) {
-    if (row.description === description) {
-      row.descriptionZh = cleaned;
-    }
+    applyTranslationToRow(row, description, cleaned);
   }
 
   renderRows(state.visibleRows);
@@ -919,6 +941,18 @@ function applyDescriptionTranslation(description, translation) {
       displayZhDescription(state.selected),
       state.selected.description || ""
     ].filter(Boolean).join("；");
+  }
+  renderClassificationPath(state.selected);
+}
+
+function applyTranslationToRow(row, description, translation) {
+  if (row.description === description) {
+    row.descriptionZh = translation;
+  }
+  for (const parent of row.classificationPath || []) {
+    if (parent.description === description) {
+      parent.descriptionZh = translation;
+    }
   }
 }
 
@@ -1005,6 +1039,12 @@ function buildAdditionalDutyRules(row, context = {}) {
     const policyRule = getPolicyRuleByCode(code);
     const catalog = policyRuleToDutyCatalog(policyRule) || dutyRuleCatalog[code] || inferDutyRuleByCode(code);
     const policyInactive = getPolicyInactiveMeta(policyRule, context);
+    const forcedLaborExemption = code === "9903.05.31" && !policyInactive
+      ? matchForcedLaborExemptions(row.htsno, state.forcedLaborExemptions || {}, {
+          referenceDate: getPolicyReferenceDate(context)
+        })
+      : null;
+    const exactForcedLaborExemption = forcedLaborExemption?.exact || null;
     const temporary122Choice = code === "9903.03.01" && !policyInactive ? getTemporary122Choice(row, context) : null;
     const temporary122Exemption = code === "9903.03.01" && !temporary122Choice && !policyInactive
       ? getTemporary122Exemption(row, context)
@@ -1015,12 +1055,16 @@ function buildAdditionalDutyRules(row, context = {}) {
       label: catalog.label || "Chapter 99 附加税",
       shortLabel: catalog.shortLabel || "CH99",
       rate: catalog.rate ?? null,
-      autoApply: policyInactive || temporary122Choice || temporary122Exemption ? false : catalog.autoApply !== false,
-      summaryZh: policyInactive?.summaryZh || temporary122Choice?.summaryZh || temporary122Exemption?.summaryZh || catalog.summaryZh,
-      exemptionStatus: policyInactive?.exemptionStatus || temporary122Choice?.exemptionStatus || (temporary122Exemption ? "不计入" : catalog.exemptionStatus || "需确认"),
-      note: policyInactive?.note || temporary122Choice?.note || temporary122Exemption?.note || catalog.note || "来自 USITC 脚注或常见附加税规则，需复核适用条件。",
-      exempt: Boolean(temporary122Exemption),
-      exemptionCode: temporary122Exemption?.code || ""
+      autoApply: policyInactive || exactForcedLaborExemption || temporary122Choice || temporary122Exemption ? false : catalog.autoApply !== false,
+      summaryZh: policyInactive?.summaryZh || exactForcedLaborExemption?.summaryZh || temporary122Choice?.summaryZh || temporary122Exemption?.summaryZh || catalog.summaryZh,
+      exemptionStatus: policyInactive?.exemptionStatus || (exactForcedLaborExemption ? "自动豁免" : "") || temporary122Choice?.exemptionStatus || (temporary122Exemption ? "不计入" : catalog.exemptionStatus || "需确认"),
+      note: policyInactive?.note || (exactForcedLaborExemption
+        ? `${exactForcedLaborExemption.titleZh}；截止日：${exactForcedLaborExemption.expiryLabel}。`
+        : "") || temporary122Choice?.note || temporary122Exemption?.note || catalog.note || "来自 USITC 脚注或常见附加税规则，需复核适用条件。",
+      exempt: Boolean(exactForcedLaborExemption || temporary122Exemption),
+      exemptionCode: exactForcedLaborExemption?.code || temporary122Exemption?.code || "",
+      exemptionSourceUrl: exactForcedLaborExemption?.sourceUrl || "",
+      possibleExemptions: forcedLaborExemption?.possible || []
     };
   });
 }
@@ -1428,6 +1472,7 @@ function renderDetail(row) {
     resetCottonAssessment("选择 HTS CODE 后自动检查棉费；其他专项费用可按官方或报关资料手动录入。");
     els.selectedCode.textContent = "未选择";
     els.selectedDescription.textContent = "从左侧结果选择一行。";
+    renderClassificationPath(null);
     els.miniHsCode.textContent = "--";
     els.miniProductDescription.textContent = "从左侧结果选择一行。";
     els.effectiveRate.textContent = "--";
@@ -1449,6 +1494,7 @@ function renderDetail(row) {
     <span class="zh-line">${escapeHtml(displayZhDescription(row))}</span>
     <span class="en-line">${escapeHtml(row.description || "--")}</span>
   `;
+  renderClassificationPath(row);
   els.miniHsCode.textContent = normalizeHtsCode(row.htsno);
   els.miniProductDescription.textContent = [
     displayZhDescription(row),
@@ -1483,6 +1529,27 @@ function renderDetail(row) {
   }
 
   els.detailNotes.innerHTML = notes.map((note) => `<div class="note">${escapeHtml(note)}</div>`).join("");
+}
+
+function renderClassificationPath(row) {
+  if (!els.classificationPath || !els.classificationPathList) {
+    return;
+  }
+
+  const path = row?.classificationPath || [];
+  els.classificationPath.classList.toggle("hidden", path.length === 0);
+  els.classificationPathList.innerHTML = path
+    .map((item) => {
+      const zh = getPreferredDescriptionZh(item);
+      return `
+        <li>
+          <span>${escapeHtml(item.htsno || "上级分类")}</span>
+          ${zh ? `<strong>${escapeHtml(zh)}</strong>` : ""}
+          <small>${escapeHtml(item.description || "--")}</small>
+        </li>
+      `;
+    })
+    .join("");
 }
 
 function getCertificationContextQuery() {
@@ -1878,6 +1945,7 @@ function renderRestrictionItem(item, parsed, rule, applied) {
   const materialBadge = rule.material?.shortLabel
     ? `<em class="material-badge">${escapeHtml(rule.material.shortLabel)}</em>`
     : "";
+  const exemptionDetails = renderForcedLaborExemptionDetails(rule);
 
   return `
     <div class="restriction-item ${applied ? "applied" : "not-applied"}">
@@ -1891,8 +1959,74 @@ function renderRestrictionItem(item, parsed, rule, applied) {
         <span>${escapeHtml(status)}</span>
         <button class="help-dot" type="button" title="${escapeHtml(title)}" aria-label="${escapeHtml(title)}">?</button>
       </div>
+      ${exemptionDetails}
     </div>
   `;
+}
+
+function renderForcedLaborExemptionDetails(rule) {
+  const possible = rule.possibleExemptions || [];
+  if (!rule.exempt && !possible.length) {
+    return "";
+  }
+
+  const heading = rule.exempt
+    ? `${rule.exemptionCode} 已自动排除本项12.5%`
+    : `${possible.length} 项可能排除规则待核`;
+  const exactItem = rule.exempt
+    ? `
+      <li>
+        <strong>${escapeHtml(rule.exemptionCode)}</strong>
+        <span>${escapeHtml(rule.summaryZh || "")}</span>
+        <small>${escapeHtml(rule.note || "")}</small>
+      </li>
+    `
+    : "";
+  const possibleItems = (rule.exempt ? [] : possible)
+    .map((item) => `
+      <li>
+        <strong>${escapeHtml(item.code)} ${escapeHtml(item.titleZh || "")}</strong>
+        <span>${escapeHtml(item.summaryZh || "")}</span>
+        <small>${escapeHtml([item.conditionZh, `截止日：${item.expiryLabel}`].filter(Boolean).join("；"))}</small>
+      </li>
+    `)
+    .join("");
+  const sourceLink = rule.exemptionSourceUrl
+    ? `<a href="${escapeHtml(rule.exemptionSourceUrl)}" target="_blank" rel="noopener noreferrer">打开CBP官方说明</a>`
+    : "";
+
+  return `
+    <details class="forced-labor-exemption-detail">
+      <summary>${escapeHtml(heading)}</summary>
+      <ul>${exactItem}${possibleItems}</ul>
+      ${sourceLink}
+    </details>
+  `;
+}
+
+async function attachClassificationPaths(rows, force = false) {
+  if (!rows.length || rows.every((row) => Array.isArray(row.classificationPath))) {
+    return rows;
+  }
+
+  try {
+    const index = await loadStaticData("hts-search-index.json", force);
+    const candidates = buildStaticSearchCandidates(index.value || []);
+    const byKey = new Map(candidates.map((candidate) => [
+      classificationRowKey(candidate.row),
+      candidate.row.classificationPath || []
+    ]));
+    return rows.map((row) => ({
+      ...row,
+      classificationPath: byKey.get(classificationRowKey(row)) || []
+    }));
+  } catch {
+    return rows.map((row) => ({ ...row, classificationPath: [] }));
+  }
+}
+
+function classificationRowKey(row) {
+  return `${normalizeStaticHtsDigits(row?.htsno)}|${String(row?.description || "").trim().toLowerCase()}`;
 }
 
 function renderAdCvdRestrictionItem(match) {
@@ -2549,10 +2683,12 @@ async function staticApi(path, options = {}) {
   if (pathname === "/api/translate-description") {
     const text = String(url.searchParams.get("text") || "");
     const translations = await loadStaticData("translations.json").catch(() => ({ values: {} }));
+    const cached = getClientTranslation(text);
+    const translation = translations.values?.[text] || cached || await translateDescriptionInBrowser(text);
     return {
       text,
-      translation: translations.values?.[text] || "",
-      source: "static"
+      translation,
+      source: translations.values?.[text] ? "static" : cached ? "browser-cache" : "MyMemory"
     };
   }
 
@@ -2608,23 +2744,7 @@ async function staticSearch(query, force = false) {
 }
 
 function buildStaticSearchCandidates(rows) {
-  const stack = [];
-  return rows.map((row) => {
-    const indent = Number(row.indent || 0);
-    while (stack.length && stack[stack.length - 1].indent >= indent) {
-      stack.pop();
-    }
-
-    const ownText = `${row.description || ""} ${row.descriptionZh || ""}`;
-    const parentText = stack.map((item) => item.text).join(" ");
-    const searchText = `${row.htsno || ""} ${parentText} ${ownText}`;
-
-    if (ownText.trim()) {
-      stack.push({ indent, text: ownText });
-    }
-
-    return { row, ownText, parentText, searchText };
-  });
+  return buildClassificationCandidates(rows);
 }
 
 function buildStaticSearchPlan(query) {
@@ -2866,7 +2986,9 @@ function escapeRegExpForSearch(value) {
 async function staticSearchByHts(digits, force = false) {
   const chapter = digits.slice(0, 2);
   const data = await loadStaticData(`chapters/${chapter}.json`, force);
-  const rows = (data.value || []).filter((row) => row.htsno);
+  const rows = buildStaticSearchCandidates(data.value || [])
+    .map((candidate) => candidate.row)
+    .filter((row) => row.htsno);
   const exact = rows.filter((row) => normalizeStaticHtsDigits(row.htsno) === digits);
   if (exact.length) {
     return exact;
@@ -3224,7 +3346,66 @@ function rowKey(row) {
 }
 
 function displayZhDescription(row) {
-  return row?.descriptionZh || row?.description || "暂无中文释义";
+  return getPreferredDescriptionZh(row) || "中文辅助生成中...";
+}
+
+const clientTranslationStorageKey = "hts-description-translations-v2";
+
+function getClientTranslation(text) {
+  try {
+    const values = JSON.parse(localStorage.getItem(clientTranslationStorageKey) || "{}");
+    const translation = String(values[text] || "").trim();
+    return isUsableChineseDescription(translation) ? translation : "";
+  } catch {
+    return "";
+  }
+}
+
+function setClientTranslation(text, translation) {
+  if (!text || !isUsableChineseDescription(translation)) {
+    return;
+  }
+  try {
+    const values = JSON.parse(localStorage.getItem(clientTranslationStorageKey) || "{}");
+    values[text] = translation;
+    const entries = Object.entries(values).slice(-500);
+    localStorage.setItem(clientTranslationStorageKey, JSON.stringify(Object.fromEntries(entries)));
+  } catch {
+    // Translation caching is optional when browser storage is unavailable.
+  }
+}
+
+async function translateDescriptionInBrowser(text) {
+  if (!text) {
+    return "";
+  }
+  try {
+    const params = new URLSearchParams({
+      q: text,
+      langpair: "en|zh-CN"
+    });
+    const response = await fetch(`https://api.mymemory.translated.net/get?${params}`, {
+      headers: { accept: "application/json" }
+    });
+    if (!response.ok) {
+      return "";
+    }
+    const data = await response.json();
+    const translation = decodeHtmlText(data.responseData?.translatedText || "").trim();
+    if (!isUsableChineseDescription(translation)) {
+      return "";
+    }
+    setClientTranslation(text, translation);
+    return translation;
+  } catch {
+    return "";
+  }
+}
+
+function decodeHtmlText(value) {
+  const textarea = document.createElement("textarea");
+  textarea.innerHTML = String(value || "");
+  return textarea.value;
 }
 
 function hasChineseText(value) {

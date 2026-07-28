@@ -20,6 +20,8 @@ const SECTION_232_MONITOR_URLS = [
 const SECTION_122_ANNEX_II_URL =
   "https://www.whitehouse.gov/wp-content/uploads/2026/02/2026Section122.prc_.ANNEX2_.Final_.pdf";
 const CBP_FORCED_LABOR_301_URL = "https://content.govdelivery.com/accounts/USDHSCBP/bulletins/421d887";
+const CBP_FORCED_LABOR_HTS_LIST_URL =
+  "https://content.govdelivery.com/attachments/USDHSCBP/2026/07/23/file_attachments/3723786/Forced%20Labor%20HTS%20LIST.pdf";
 const FORCED_LABOR_301_SOURCE_URL =
   "https://ustr.gov/sites/default/files/files/Press/Releases/2026/FLIP%20301%20Investigation%20Final%20Action%20FRN%207-23-26%20FINAL.pdf";
 const COTTON_ASSESSMENT_URL =
@@ -136,6 +138,14 @@ const syncSources = [
     description: "由政策税项监控派生的 9903.05.31 中国原产商品 12.5% 兼容快照。"
   },
   {
+    id: "forcedLaborExemptions",
+    name: "新301排除清单",
+    sourceName: "CBP Forced Labor HTS List",
+    url: CBP_FORCED_LABOR_301_URL,
+    intervalMs: 60 * 60 * 1000,
+    description: "解析9903.05.85-9903.05.92排除规则，统计有效、到期、精确HTS及条件类项目。"
+  },
+  {
     id: "section122",
     name: "122 Annex II 排除清单",
     sourceName: "White House Section 122 Annex II",
@@ -245,6 +255,14 @@ const chineseAliases = new Map([
 ]);
 
 const exactDescriptionTranslations = new Map([
+  [
+    "Machines which perform two or more of the functions of printing, copying or facsimile transmission, capable of connecting to an automatic data processing machine or to a network",
+    "可连接自动数据处理设备或网络，并能执行打印、复印或传真传输中两项或多项功能的机器。"
+  ],
+  [
+    "Flat panel display modules, other than flat panel display modules for articles of subheadings 8528.59, 8528.69, 8528.72 and 8528.73",
+    "平板显示模组，但第8528.59、8528.69、8528.72及8528.73子目所列平板显示模组除外。"
+  ],
   ["Coffee or tea makers", "咖啡机或茶具"],
   ["Automatic drip and pump type", "自动滴滤式及泵压式"],
   ["Percolator", "渗滤式咖啡壶"],
@@ -1230,6 +1248,23 @@ async function runSyncTask(source, force = false) {
         sourceUrl: snapshot.sourceUrl || CBP_FORCED_LABOR_301_URL,
         sourceStatus: response.status
       };
+    } else if (source.id === "forcedLaborExemptions") {
+      const snapshot = await loadForcedLaborExemptionsSnapshot();
+      const response = await fetch(CBP_FORCED_LABOR_HTS_LIST_URL, { method: "HEAD" });
+      if (!response.ok) {
+        throw new Error(`CBP forced labor HTS list unavailable: ${response.status}`);
+      }
+      detail = {
+        count: snapshot.statistics?.exactExclusionCodes || 0,
+        activeRules: snapshot.statistics?.activeRules || 0,
+        expiredRules: snapshot.statistics?.expiredRules || 0,
+        expiredRule: "9903.05.85 截止 2026-07-28",
+        particularArticles: snapshot.statistics?.particularArticles || 0,
+        conditionalHtsCodes: snapshot.statistics?.conditionalHtsCodes || 0,
+        pdfUrl: snapshot.pdfUrl || CBP_FORCED_LABOR_HTS_LIST_URL,
+        sourceStatus: response.status,
+        fetchedAt: snapshot.generatedAt
+      };
     } else if (source.id === "section122") {
       const snapshot = await loadSection122ExclusionSnapshot();
       const response = await fetch(SECTION_122_ANNEX_II_URL, { method: "HEAD" });
@@ -1278,6 +1313,11 @@ async function loadSection122ExclusionSnapshot() {
     ...data,
     count: data.count || data.codes?.length || 0
   };
+}
+
+async function loadForcedLaborExemptionsSnapshot() {
+  const filePath = path.join(publicDir, "data", "forced-labor-exemptions.json");
+  return JSON.parse(await readFile(filePath, "utf8"));
 }
 
 async function loadPolicyRulesSnapshot() {
