@@ -313,8 +313,24 @@ function checkEpaEp5AndDoeFtcPrompts(searchIndex, epaFlags) {
   const dualIds = dualMatches.map((match) => match.id);
   record(
     "EPA EP5 and DOE/FTC prompts remain independent when both apply",
-    dualIds.includes("epa-flag-ep5") && dualIds.includes("doe-energy-labeling"),
+    dualIds.includes("epa-flag-ep5")
+      && dualIds.includes("doe-energy-labeling")
+      && dualMatches.find((match) => match.id === "doe-energy-labeling")?.matchedRatedParameters?.includes("9w"),
     `matches=${dualIds.join(",") || "none"}`
+  );
+
+  const refrigeratorMatches = matchCertificationRules({
+    htsno: "8418.10.00.00",
+    description: "Combined refrigerator-freezers"
+  }, {
+    query: "household refrigerator",
+    epaFlags
+  });
+  const refrigeratorDoe = refrigeratorMatches.find((match) => match.id === "doe-energy-labeling");
+  record(
+    "DOE/FTC covered product without ratings asks for parameters",
+    Boolean(refrigeratorDoe && refrigeratorDoe.status === "need_input"),
+    refrigeratorDoe ? `status=${refrigeratorDoe.status}; matchedBy=${refrigeratorDoe.matchedBy}` : "missing"
   );
 }
 

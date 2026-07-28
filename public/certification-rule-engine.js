@@ -1,4 +1,4 @@
-import { certificationCatalog } from "./certification-catalog.js?v=20260729-epa-ep5";
+import { certificationCatalog } from "./certification-catalog.js?v=20260729-epa-ep5-2";
 
 const statusMeta = {
   high: {
@@ -178,6 +178,9 @@ function matchCertificationItem(item, htsDigits, haystack) {
     .filter((prefix) => prefix && htsDigits.startsWith(prefix));
   const keywordMatches = (rule.keywords || [])
     .filter((keyword) => matchesKeyword(haystack, keyword));
+  const ratedParameterMatches = (rule.ratedParameterPatterns || [])
+    .map((pattern) => matchPattern(haystack, pattern))
+    .filter(Boolean);
 
   const needsExact = Boolean(rule.exactCodes?.length);
   const needsPrefix = Boolean(rule.prefixes?.length);
@@ -204,13 +207,23 @@ function matchCertificationItem(item, htsDigits, haystack) {
   if (hasKeyword) {
     reasons.push(`关键词 ${keywordMatches.slice(0, 3).join(" / ")}`);
   }
+  if (rule.ratedParameterCheck) {
+    reasons.push(ratedParameterMatches.length
+      ? `额定参数 ${ratedParameterMatches.slice(0, 3).join(" / ")}`
+      : "额定参数待补充");
+  }
 
-  return {
+  const result = {
     matchedBy: reasons.join("；"),
     matchedExactCodes: exactMatches,
     matchedPrefixes: prefixMatches,
-    matchedKeywords: keywordMatches
+    matchedKeywords: keywordMatches,
+    matchedRatedParameters: ratedParameterMatches
   };
+  if (rule.ratedParameterCheck && ratedParameterMatches.length === 0) {
+    result.status = "need_input";
+  }
+  return result;
 }
 
 function matchesKeyword(haystack, keyword) {
@@ -228,6 +241,14 @@ function matchesKeyword(haystack, keyword) {
     return new RegExp(`(^|\\s)${escapeRegExp(normalized)}($|\\s)`, "i").test(haystack);
   }
   return haystack.includes(normalized);
+}
+
+function matchPattern(haystack, pattern) {
+  try {
+    return haystack.match(new RegExp(pattern, "i"))?.[0] || "";
+  } catch {
+    return "";
+  }
 }
 
 function formatMatchedPrefixes(prefixes) {

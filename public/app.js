@@ -14,7 +14,7 @@ import {
   getCertificationStatusMeta,
   matchCertificationRules,
   summarizeCertificationMatches
-} from "./certification-rule-engine.js?v=20260729-epa-ep5";
+} from "./certification-rule-engine.js?v=20260729-epa-ep5-2";
 import {
   buildClassificationCandidates,
   expandHtsPrefixRows,

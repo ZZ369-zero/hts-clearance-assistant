@@ -551,6 +551,12 @@ export const certificationCatalog = [
         "television", "ceiling fan", "general service lamp", "led lamp", "external power supply",
         "冰箱", "冷藏冷冻箱", "冷柜", "房间空调", "中央空调", "暖炉", "锅炉", "热泵", "泳池加热器",
         "热水器", "洗衣机", "洗碗机", "电视机", "吊扇", "通用照明灯", "LED 灯", "外部电源"
+      ],
+      ratedParameterCheck: true,
+      ratedParameterPatterns: [
+        "\\b\\d[\\d,.]*\\s*(?:w|kw|v|volt|volts|hz|a|amp|amps|btu|tons?|gallons?|liters?|litres?)\\b",
+        "\\b\\d[\\d,.]*\\s*(?:cu ft|cubic feet|cubic foot)\\b",
+        "\\d[\\d,.]*\\s*(?:瓦|千瓦|伏|赫兹|安培|升|加仑|匹)"
       ]
     },
     summary: "具体受管家电、暖通、照明或外部电源产品可能涉及 DOE 能效标准及 FTC EnergyGuide/能耗标签要求。",
