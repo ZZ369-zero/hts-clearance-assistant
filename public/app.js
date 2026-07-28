@@ -24,6 +24,7 @@ import {
 import {
   matchForcedLaborExemptions
 } from "./forced-labor-exemption-engine.js?v=20260729-exemptions";
+import { getChapterTitle } from "./chapter-titles.js?v=20260729-bilingual-chapters";
 
 const section122FallbackExclusionPrefixes = [
   "84713001",
@@ -679,7 +680,10 @@ async function loadChapters() {
   const data = await api("/api/chapters");
   state.chapters = data.chapters || [];
   els.chapterSelect.innerHTML = state.chapters
-    .map(([code, title]) => `<option value="${code}">${code} - ${escapeHtml(title)}</option>`)
+    .map(([code, titleEn, titleZh]) => {
+      const title = getChapterTitle(code, titleEn, titleZh);
+      return `<option value="${code}">${code} - ${escapeHtml(title.titleZh)} / ${escapeHtml(title.titleEn)}</option>`;
+    })
     .join("");
   els.chapterSelect.value = state.lastChapter;
 }
@@ -796,8 +800,9 @@ async function loadChapter(chapter, force = false) {
     state.rows = buildStaticSearchCandidates(data.value || []).map((candidate) => candidate.row);
     state.visibleRows = state.rows;
     state.dataKind = "chapter";
-    const title = state.chapters.find(([code]) => code === chapter)?.[1] || "HTS chapter";
-    els.resultTitle.textContent = `${chapter} - ${title}`;
+    const chapterEntry = state.chapters.find(([code]) => code === chapter) || [];
+    const title = getChapterTitle(chapter, chapterEntry[1], chapterEntry[2]);
+    els.resultTitle.textContent = `${chapter} - ${title.titleZh} / ${title.titleEn}`;
     renderSearchGuide([]);
     els.chapterFilter.value = "";
     renderRows(state.visibleRows);

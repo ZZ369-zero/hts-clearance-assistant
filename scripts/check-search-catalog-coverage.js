@@ -7,6 +7,7 @@ import {
   getPreferredDescriptionZh,
   isUsableChineseDescription
 } from "../public/description-helper.js";
+import { chapterTitleCatalog, getChapterTitle } from "../public/chapter-titles.js";
 
 const probeTerms = [
   "生物制品",
@@ -135,6 +136,15 @@ assert(sixDigitExpansion.expanded, "6 位 HTS CODE 应展开下级统计税号")
 assert(expandedCodes.includes("8524911000"), "852491 应包含完整税号 8524911000");
 assert(expandedCodes.includes("8524919000"), "852491 应包含完整税号 8524919000");
 assert(expandedCodes.every((code) => code.length === 10), "父级编码展开结果必须全部为 10 位 HTS CODE");
+
+assert(chapterTitleCatalog.length === 98, "HTS 章节目录应包含除第77章外的 98 个有效章节");
+assert(!chapterTitleCatalog.some(([code]) => code === "77"), "HTS 章节目录不应包含保留的第77章");
+for (const [code, titleZh, titleEn] of chapterTitleCatalog) {
+  assert(Boolean(titleZh && titleEn), `第${code}章必须同时包含中英文标题`);
+}
+const chapter85Title = getChapterTitle("85");
+assert(chapter85Title.titleZh === "电机、电气设备及其零件", "第85章应显示规范中文标题");
+assert(chapter85Title.titleEn === "Electrical machinery and equipment", "第85章应保留英文标题");
 
 function matchCatalogEntries(query) {
   const normalizedQuery = normalizeSearchText(query);
