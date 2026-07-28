@@ -15,7 +15,7 @@ main().catch((error) => {
 });
 
 async function main() {
-  const [manifest, searchIndex, chapter99, policyRules, forcedLabor301, section122, section232, cotton, adCvd] = await Promise.all([
+  const [manifest, searchIndex, chapter99, policyRules, forcedLabor301, section122, section232, cotton, adCvd, fdaFlags] = await Promise.all([
     readJson(path.join(dataDir, "manifest.json")),
     readJson(path.join(dataDir, "hts-search-index.json")),
     readJson(path.join(dataDir, "chapter99.json")),
@@ -24,7 +24,8 @@ async function main() {
     readJson(path.join(dataDir, "section122-exclusions.json")),
     readJson(path.join(dataDir, "section232.json")),
     readJson(path.join(dataDir, "cotton.json")),
-    readJson(path.join(dataDir, "adcvd.json"))
+    readJson(path.join(dataDir, "adcvd.json")),
+    readJson(path.join(dataDir, "fda-flags.json"))
   ]);
 
   checkManifest(manifest);
@@ -35,7 +36,8 @@ async function main() {
   checkLaptop122Outcome(searchIndex, section122);
   checkRelatedAnnexIiElectronics(section122);
   checkTextile6307909891Outcome(searchIndex);
-  checkCertificationPrompt(searchIndex);
+  checkCertificationPrompt(searchIndex, fdaFlags);
+  checkFdaFd1PrinterPrompt(searchIndex, fdaFlags);
   checkSection232Snapshot(section232);
   checkCottonSnapshot(cotton);
   checkAdCvdSnapshot(adCvd);
@@ -52,6 +54,7 @@ function checkManifest(manifest) {
   const section122 = (manifest.sources || []).find((source) => source.id === "section122");
   const policyRules = (manifest.sources || []).find((source) => source.id === "policyRules");
   const forcedLabor301 = (manifest.sources || []).find((source) => source.id === "forcedLabor301");
+  const fdaFlags = (manifest.sources || []).find((source) => source.id === "fdaFlags");
   record(
     "manifest includes section122 source",
     Boolean(section122 && section122.state?.detail?.count >= 1500),
@@ -66,6 +69,11 @@ function checkManifest(manifest) {
     "manifest includes forced labor 301 supplemental source",
     Boolean(forcedLabor301 && forcedLabor301.state?.detail?.count >= 1),
     forcedLabor301 ? `count=${forcedLabor301.state?.detail?.count || 0}` : "missing"
+  );
+  record(
+    "manifest includes FDA FD flag source",
+    Boolean(fdaFlags && fdaFlags.state?.detail?.count >= 5000),
+    fdaFlags ? `count=${fdaFlags.state?.detail?.count || 0}` : "missing"
   );
 }
 
@@ -160,18 +168,36 @@ function checkTextile6307909891Outcome(searchIndex) {
   );
 }
 
-function checkCertificationPrompt(searchIndex) {
+function checkCertificationPrompt(searchIndex, fdaFlags) {
   const row = findRowByDigits(searchIndex, "3304100000") || {
     htsno: "3304.10.00.00",
     description: "Lip make-up preparations",
     descriptionZh: "lip makeup preparations"
   };
-  const matches = matchCertificationRules(row, { query: "3304100000", productName: "lipstick lip balm cosmetics" });
+  const matches = matchCertificationRules(row, {
+    query: "3304100000",
+    productName: "lipstick lip balm cosmetics",
+    fdaFlags
+  });
   const ids = matches.map((match) => match.id);
   record(
     "3304100000 keeps AM7 and FD2 certification prompts",
-    ids.includes("ams-organic-am7") && ids.includes("fda-cosmetic-fd2-3304100000"),
+    ids.includes("ams-organic-am7") && ids.includes("fda-flag-fd2"),
     `matches=${ids.join(",") || "none"}`
+  );
+}
+
+function checkFdaFd1PrinterPrompt(searchIndex, fdaFlags) {
+  const row = findRowByDigits(searchIndex, "8443310000") || {
+    htsno: "8443.31.00.00",
+    description: "Machines which perform two or more of the functions of printing, copying or facsimile transmission"
+  };
+  const matches = matchCertificationRules(row, { query: "8443310000", fdaFlags });
+  const fd1 = matches.find((match) => match.id === "fda-flag-fd1");
+  record(
+    "8443310000 resolves to FDA FD1 exact HTS flag",
+    Boolean(fd1 && fd1.matchedExactCodes?.includes("8443310000")),
+    fd1 ? `matchedBy=${fd1.matchedBy}` : `matches=${matches.map((match) => match.id).join(",") || "none"}`
   );
 }
 

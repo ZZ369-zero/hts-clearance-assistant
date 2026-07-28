@@ -19,6 +19,7 @@ on:
           - section232
           - adcvd
           - cotton
+          - fdaFlags
           - translations
   schedule:
     # HTS / normal duty / Chapter 99: every 1 hour.
@@ -29,6 +30,8 @@ on:
     - cron: "17 */6 * * *"
     # AD/CVD official monitor and static match snapshot: every 24 hours.
     - cron: "27 2 * * *"
+    # FDA FD1-FD4 HTS flag lists: every 24 hours.
+    - cron: "47 2 * * *"
     # Cotton Import Assessment: every 24 hours.
     - cron: "37 3 * * *"
     # Translation helper cache: weekly.
@@ -60,6 +63,14 @@ jobs:
         with:
           node-version: "20"
 
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install FDA flag parser dependency
+        run: python -m pip install xlrd==2.0.2
+
       - name: Resolve export scope
         id: scope
         shell: bash
@@ -72,6 +83,7 @@ jobs:
               "57 1 * * *") scope="section122" ;;
               "17 */6 * * *") scope="section232" ;;
               "27 2 * * *") scope="adcvd" ;;
+              "47 2 * * *") scope="fdaFlags" ;;
               "37 3 * * *") scope="cotton" ;;
               "47 4 * * 1") scope="translations" ;;
               *) scope="all" ;;

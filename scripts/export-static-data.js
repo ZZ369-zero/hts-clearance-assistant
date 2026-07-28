@@ -1,6 +1,7 @@
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { buildLegacyForcedLabor301Snapshot, buildPolicyRulesSnapshot } from "./policy-rule-monitor.js";
 
@@ -14,6 +15,7 @@ const baseUrl = process.env.STATIC_EXPORT_BASE_URL || `http://127.0.0.1:${port}`
 const scope = getArgValue("--scope") || process.env.STATIC_EXPORT_SCOPE || "all";
 const now = new Date().toISOString();
 const forcedLabor301SourceUrl = "https://content.govdelivery.com/accounts/USDHSCBP/bulletins/421d887";
+const execFileAsync = promisify(execFile);
 
 const syncSourceConfig = {
   hts: {
@@ -44,6 +46,10 @@ const syncSourceConfig = {
     ids: ["adcvdOfficial", "adcvdLocal"],
     minutes: 1440
   },
+  fdaFlags: {
+    ids: ["fdaFlags"],
+    minutes: 1440
+  },
   translations: {
     ids: ["translations"],
     minutes: 10080
@@ -60,6 +66,7 @@ const sourceLabels = {
   cotton: ["Cotton Import Assessment", "eCFR 7 CFR 1205", "Cotton import assessment table.", "https://www.ecfr.gov/current/title-7/subtitle-B/chapter-XI/part-1205/subpart-ECFR80efc31412f8612"],
   adcvdOfficial: ["AD/CVD official ACCESS", "ITA ACCESS AD/CVD", "Official ACCESS status monitor.", "https://access.trade.gov/adcvd"],
   adcvdLocal: ["AD/CVD HTS match dataset", "Local AD/CVD data snapshot", "HTS match snapshot used by the static site.", "https://access.trade.gov/adcvd"],
+  fdaFlags: ["FDA FD1-FD4 HTS flags", "FDA / CustomsInfo public OGA lists", "FDA flag meanings and exact HTS code lists used for FD1-FD4 entry prompts.", "https://www.fda.gov/industry/import-basics/harmonized-tariff-schedule-and-fd-flags"],
   translations: ["Description translation cache", "Generated cache", "Weekly helper cache for bilingual descriptions.", ""]
 };
 
@@ -108,6 +115,9 @@ async function main() {
     }
     if (selected.includes("adcvd")) {
       await exportAdCvd(manifest);
+    }
+    if (selected.includes("fdaFlags")) {
+      await exportFdaFlags(manifest);
     }
     if (selected.includes("translations")) {
       await exportTranslations(manifest);
@@ -330,6 +340,60 @@ async function exportAdCvd(manifest) {
   });
 }
 
+async function exportFdaFlags(manifest) {
+  console.log("Exporting FDA FD1-FD4 HTS flag lists...");
+  const filePath = path.join(dataDir, "fda-flags.json");
+  const old = await readJsonSafe(filePath, null);
+  let data;
+
+  try {
+    const pythonCommand = process.env.PYTHON || "python";
+    const parserPath = path.join(__dirname, "parse-fda-flags.py");
+    const result = await execFileAsync(pythonCommand, [parserPath], {
+      cwd: rootDir,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        PYTHONIOENCODING: "utf-8"
+      },
+      maxBuffer: 16 * 1024 * 1024,
+      timeout: 4 * 60 * 1000
+    });
+    data = JSON.parse(result.stdout);
+  } catch (error) {
+    if (!old?.codes || Object.keys(old.codes).length === 0) {
+      throw error;
+    }
+    console.warn(`FDA FD flag export failed, keeping previous snapshot: ${error.message}`);
+    data = {
+      ...old,
+      generatedAt: now,
+      retainedPreviousRows: true,
+      warning: error.message
+    };
+  }
+
+  if (!data.codes?.["8443310000"]?.some((record) => record.flag === "FD1")) {
+    throw new Error("FDA FD flag export failed sentinel: 8443.31.0000 is not present in FD1.");
+  }
+
+  await writeJson(filePath, data);
+  manifest.counts = {
+    ...(manifest.counts || {}),
+    fdaFlagRows: data.count || 0,
+    fdaFlagCodes: data.uniqueCodeCount || Object.keys(data.codes || {}).length
+  };
+  setSourceState(manifest, "fdaFlags", {
+    count: data.count || 0,
+    uniqueCodeCount: data.uniqueCodeCount || Object.keys(data.codes || {}).length,
+    datasetDates: Object.fromEntries(
+      Object.entries(data.flags || {}).map(([flag, item]) => [flag, item.datasetDate || ""])
+    ),
+    providerName: data.source?.providerName,
+    fetchedAt: data.generatedAt || now
+  });
+}
+
 function sanitizeAdCvdSnapshot(data) {
   const source = { ...(data.source || {}) };
   delete source.csvPath;
@@ -358,7 +422,7 @@ async function exportTranslations(manifest) {
 
 function expandScope(value) {
   if (!value || value === "all") {
-    return ["hts", "policyRules", "forcedLabor301", "section122", "section232", "cotton", "adcvd", "translations"];
+    return ["hts", "policyRules", "forcedLabor301", "section122", "section232", "cotton", "adcvd", "fdaFlags", "translations"];
   }
   return [...new Set(String(value).split(",").map((item) => item.trim()).filter(Boolean))];
 }
@@ -448,12 +512,13 @@ function countForSource(id, counts) {
   if (id === "section232") return counts.section232Rows || 0;
   if (id === "cotton") return counts.cottonRows || 0;
   if (id === "adcvdLocal") return counts.adcvdRows || 0;
+  if (id === "fdaFlags") return counts.fdaFlagRows || 0;
   if (id === "translations") return counts.translations || 0;
   return 1;
 }
 
 function sourceOrder(id) {
-  return ["htsStatus", "chapter99", "policyRules", "forcedLabor301", "section122", "section232", "cotton", "adcvdOfficial", "adcvdLocal", "translations"].indexOf(id);
+  return ["htsStatus", "chapter99", "policyRules", "forcedLabor301", "section122", "section232", "cotton", "adcvdOfficial", "adcvdLocal", "fdaFlags", "translations"].indexOf(id);
 }
 
 async function startServer() {

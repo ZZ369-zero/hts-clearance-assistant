@@ -30,17 +30,74 @@ export function matchCertificationRules(row, context = {}) {
     contextText
   ].filter(Boolean).join(" "));
 
-  return certificationCatalog
+  const catalogMatches = certificationCatalog
     .map((item) => {
       const match = matchCertificationItem(item, htsDigits, haystack);
       return match ? { ...item, ...match } : null;
     })
-    .filter(Boolean)
+    .filter(Boolean);
+  const fdaFlagMatches = matchFdaFlagRules(htsDigits, context?.fdaFlags);
+
+  return [...fdaFlagMatches, ...catalogMatches]
     .filter((item, index, matches) => {
       const suppressedIds = new Set(matches.flatMap((match) => match.suppresses || []));
       return !suppressedIds.has(item.id);
     })
     .sort((a, b) => (a.sequence || 999) - (b.sequence || 999));
+}
+
+function matchFdaFlagRules(htsDigits, snapshot) {
+  if (!htsDigits || !snapshot?.codes) {
+    return [];
+  }
+
+  const records = snapshot.codes[htsDigits] || [];
+  return records.map((record) => {
+    const flag = String(record.flag || "").toUpperCase();
+    const meta = snapshot.flags?.[flag] || {};
+    const datasetDate = meta.datasetDate || snapshot.generatedAt?.slice(0, 10) || "";
+    const listDescription = String(record.description || "").trim();
+    const sourceNote = snapshot.source?.noteZh || "";
+
+    return {
+      id: `fda-flag-${flag.toLowerCase()}`,
+      sequence: 4.9,
+      agency: "FDA / CBP",
+      nameZh: meta.nameZh || `${flag} FDA 入境数据提示`,
+      nameEn: meta.nameEn || `${flag} FDA Entry Data Flag`,
+      category: "pga",
+      status: meta.status || "review",
+      suppresses: [
+        "fda-food-cosmetic-medical",
+        "fda-prior-notice-fd4",
+        "fda-biologics-fd1-fd2",
+        "fda-drug-fd1-fd2",
+        "fda-cosmetic-fd2-3304100000",
+        "fda-cosmetic-fd1-fd2",
+        "fda-device-fd1-fd2",
+        "fda-radiation-fd1-fd2",
+        "fda-veterinary-vme-fd1-fd2"
+      ],
+      summary: [
+        meta.meaningZh || `${flag} FDA 入境申报标志。`,
+        listDescription ? `清单描述：${listDescription}` : ""
+      ].filter(Boolean).join(" "),
+      explanation: [
+        `${flag} 是 FDA/CBP 入境数据标志，不等同于产品认证证书。`,
+        sourceNote,
+        "最终是否申报、disclaim、提交 Prior Notice 或补充 FDA Product Code，仍需结合产品实际用途、成分、标签和进口资料确认。"
+      ].filter(Boolean).join(" "),
+      sourceName: "FDA Harmonized Tariff Schedule and FD Flags",
+      sourceUrl: snapshot.source?.officialUrl || "https://www.fda.gov/industry/import-basics/harmonized-tariff-schedule-and-fd-flags",
+      matchedBy: [
+        `${flag} HTS 精确代码 ${formatHtsForDisplay(htsDigits)}`,
+        datasetDate ? `清单日期 ${datasetDate}` : ""
+      ].filter(Boolean).join("；"),
+      matchedExactCodes: [htsDigits],
+      matchedPrefixes: [],
+      matchedKeywords: []
+    };
+  });
 }
 
 export function getCertificationStatusMeta(status) {
@@ -140,6 +197,14 @@ function formatMatchedPrefixes(prefixes) {
 
 function normalizeHtsDigits(value) {
   return String(value || "").replace(/\D/g, "");
+}
+
+function formatHtsForDisplay(value) {
+  const digits = normalizeHtsDigits(value);
+  if (digits.length === 10) {
+    return `${digits.slice(0, 4)}.${digits.slice(4, 6)}.${digits.slice(6, 8)}.${digits.slice(8)}`;
+  }
+  return digits;
 }
 
 function normalizeCertificationText(value) {

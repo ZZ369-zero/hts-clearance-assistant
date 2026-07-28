@@ -10,7 +10,7 @@ import {
   getCertificationStatusMeta,
   matchCertificationRules,
   summarizeCertificationMatches
-} from "./certification-rule-engine.js?v=20260709-fda5";
+} from "./certification-rule-engine.js?v=20260728-fda-flags";
 
 const section122FallbackExclusionPrefixes = [
   "84713001",
@@ -77,6 +77,7 @@ const state = {
   lastQuery: "",
   lastChapter: "01",
   policyRules: null,
+  fdaFlags: null,
   section122ExclusionPrefixes: [...section122FallbackExclusionPrefixes],
   section122ExclusionsSource: "内置 Annex II 兜底清单",
   chapters: []
@@ -398,7 +399,14 @@ async function init() {
   renderSearchHistory();
   setTransportMode(state.transportMode);
   setClearanceMode(state.clearanceMode);
-  await Promise.all([loadStatus(), loadChapters(), loadSyncStatus(), loadPolicyRules(), loadSection122Exclusions()]);
+  await Promise.all([
+    loadStatus(),
+    loadChapters(),
+    loadSyncStatus(),
+    loadPolicyRules(),
+    loadFdaFlags(),
+    loadSection122Exclusions()
+  ]);
   setInterval(loadSyncStatus, 60 * 1000);
   showSearchPrompt();
   calculate();
@@ -428,6 +436,16 @@ async function loadPolicyRules(force = false) {
   } catch (error) {
     console.warn(`Policy rule monitor unavailable: ${error.message}`);
     state.policyRules = normalizePolicyRulesSnapshot(fallbackPolicyRules);
+  }
+}
+
+async function loadFdaFlags(force = false) {
+  try {
+    const data = await loadStaticData("fda-flags.json", force);
+    state.fdaFlags = data?.codes ? data : null;
+  } catch (error) {
+    state.fdaFlags = null;
+    console.warn(`FDA FD flag list unavailable: ${error.message}`);
   }
 }
 
@@ -818,6 +836,7 @@ async function refreshData() {
   try {
     await api("/api/refresh", { method: "POST" });
     await loadPolicyRules(true);
+    await loadFdaFlags(true);
     await loadSection122Exclusions(true);
     await loadStatus(true);
     await loadSyncStatus();
@@ -1443,7 +1462,10 @@ function renderDetail(row) {
   els.detailSpecial.textContent = formatRateDisplay(row.special) || "--";
   els.detailOther.textContent = formatRateDisplay(row.other) || "--";
   els.detailUnits.textContent = row.units?.length ? row.units.join(", ") : "--";
-  state.certificationMatches = matchCertificationRules(row, { query: getCertificationContextQuery() });
+  state.certificationMatches = matchCertificationRules(row, {
+    query: getCertificationContextQuery(),
+    fdaFlags: state.fdaFlags
+  });
   renderCertificationPanel(row);
 
   const notes = [];
