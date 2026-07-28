@@ -18,8 +18,9 @@
     "translate:descriptions": "node scripts/translate-descriptions-github-models.js",
     "check:descriptions": "node scripts/check-description-translations.js",
     "check:search-catalog": "node scripts/check-search-catalog-coverage.js",
+    "check:search-ranking": "node scripts/check-search-ranking.js",
     "check:policy-sentinel": "node scripts/policy-sentinel-check.js",
-    "check": "npm run check:descriptions && npm run check:search-catalog && npm run check:policy-sentinel"
+    "check": "npm run check:descriptions && npm run check:search-catalog && npm run check:search-ranking && npm run check:policy-sentinel"
   },
   "engines": {
     "node": ">=20"

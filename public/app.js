@@ -20,11 +20,12 @@ import {
   expandHtsPrefixRows,
   getPreferredDescriptionZh,
   isUsableChineseDescription
-} from "./description-helper.js?v=20260729-full-description-3";
+} from "./description-helper.js?v=20260729-preserved-path-1";
 import {
   matchForcedLaborExemptions
 } from "./forced-labor-exemption-engine.js?v=20260729-exemptions";
 import { getChapterTitle } from "./chapter-titles.js?v=20260729-bilingual-chapters";
+import { rankHtsSearchCandidates } from "./search-ranking.js?v=20260729-relevance-ranking-1";
 
 const section122FallbackExclusionPrefixes = [
   "84713001",
@@ -790,7 +791,7 @@ async function search(query, force = false) {
     renderSearchHistory();
     const matchSummary = data.matchSummary;
     const summaryText = matchSummary && (matchSummary.highRelevance || matchSummary.relatedCandidates)
-      ? `（高相关 ${matchSummary.highRelevance}，关联候选 ${matchSummary.relatedCandidates}）`
+      ? `（精准 ${matchSummary.exactMatches || 0}，高相关 ${Math.max(0, matchSummary.highRelevance - (matchSummary.exactMatches || 0))}，关联候选 ${matchSummary.relatedCandidates}）`
       : "";
     els.resultTitle.textContent = data.translated
       ? `查询结果：${data.originalQuery} → ${data.query}${summaryText}`
@@ -984,10 +985,14 @@ function renderSearchMatchMeta(match) {
   if (!match?.reasons?.length) {
     return "";
   }
-  const tierLabel = match.tier === "related" ? "关联候选" : "高相关";
+  const tierLabel = match.tier === "exact"
+    ? "精准匹配"
+    : match.tier === "related"
+      ? "关联候选"
+      : "高相关";
   return `
     <div class="search-match-meta" aria-label="检索匹配依据">
-      <span class="match-tier ${match.tier === "related" ? "related" : "direct"}">${tierLabel}</span>
+      <span class="match-tier ${match.tier === "related" ? "related" : match.tier === "exact" ? "exact" : "direct"}">${tierLabel}</span>
       ${match.reasons.slice(0, 3).map((reason) => `<span>${escapeHtml(reason)}</span>`).join("")}
     </div>
   `;
@@ -2671,18 +2676,13 @@ async function staticSearch(query, force = false) {
       plan = buildStaticSearchPlan(originalQuery, translatedQuery);
     }
   }
-  const ranked = buildStaticSearchCandidates(index.value || [])
-    .map((candidate) => {
-      const match = scoreStaticSearchRow(candidate, plan);
-      return {
-        row: match.score > 0 ? { ...candidate.row, searchMatch: match.searchMatch } : candidate.row,
-        score: match.score
-      };
-    })
-    .filter((item) => item.row.htsno && item.score > 0)
-    .sort((a, b) => b.score - a.score || String(a.row.htsno || "").localeCompare(String(b.row.htsno || "")))
-    .slice(0, 120);
+  const ranked = rankHtsSearchCandidates(
+    buildStaticSearchCandidates(index.value || []),
+    plan,
+    { limit: 120 }
+  );
   const rows = ranked.map((item) => item.row);
+  const exactMatches = rows.filter((row) => row.searchMatch?.tier === "exact").length;
   const highRelevance = rows.filter((row) => row.searchMatch?.tier !== "related").length;
   const relatedCandidates = rows.filter((row) => row.searchMatch?.tier === "related").length;
 
@@ -2691,7 +2691,7 @@ async function staticSearch(query, force = false) {
     query: plan.displayQuery || originalQuery,
     translated: plan.aliasMatched || Boolean(plan.translatedTerms?.length),
     hints: plan.hints || [],
-    matchSummary: { highRelevance, relatedCandidates },
+    matchSummary: { exactMatches, highRelevance, relatedCandidates },
     count: rows.length,
     value: rows
   };

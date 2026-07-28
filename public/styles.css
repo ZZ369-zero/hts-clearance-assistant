@@ -733,6 +733,12 @@ tbody tr.selected td:first-child {
   font-weight: 900;
 }
 
+.search-match-meta .match-tier.exact {
+  color: #176044;
+  border-color: #a9d8c5;
+  background: #eaf7f1;
+}
+
 .search-match-meta .match-tier.related {
   color: #785017;
   border-color: #ead2a8;

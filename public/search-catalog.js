@@ -255,6 +255,13 @@ export const chineseSearchCatalog = [
   { terms: ["阀门"], queries: ["valves"], chapters: ["84"], prefixBoosts: ["8481"] },
   { terms: ["轴承"], queries: ["bearings"], chapters: ["84"], prefixBoosts: ["8482"] },
   { terms: ["螺丝", "螺钉", "螺栓", "紧固件"], queries: ["screws", "bolts", "fasteners"], chapters: ["73"], prefixBoosts: ["7318"] },
+  {
+    terms: ["无刷电机", "无刷马达"],
+    queries: ["brushless electric motors", "brushless motors", "brushless"],
+    chapters: ["85"],
+    prefixBoosts: ["8501"],
+    hints: ["交流或直流", "输出功率", "单相或多相", "具体用途"]
+  },
   { terms: ["电机", "马达"], queries: ["electric motors"], chapters: ["85"], prefixBoosts: ["8501"] },
   { terms: ["风扇"], queries: ["fans", "ventilating fans"], chapters: ["84"], prefixBoosts: ["8414"] },
   { terms: ["空调"], queries: ["air conditioning machines"], chapters: ["84"], prefixBoosts: ["8415"] },

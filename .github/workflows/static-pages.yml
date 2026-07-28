@@ -111,6 +111,9 @@ jobs:
       - name: Run description translation checks
         run: npm run check:descriptions
 
+      - name: Run HTS search ranking checks
+        run: npm run check:search-ranking
+
       - name: Run policy sentinel checks
         run: npm run check:policy-sentinel
 

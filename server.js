@@ -6,7 +6,8 @@ import { fileURLToPath } from "node:url";
 import { inflateRawSync } from "node:zlib";
 import { chineseSearchCatalog } from "./public/search-catalog.js";
 import { buildChineseSearchPlan } from "./public/chinese-search-helper.js";
-import { expandHtsPrefixRows } from "./public/description-helper.js";
+import { buildClassificationCandidates, expandHtsPrefixRows } from "./public/description-helper.js";
+import { rankHtsSearchCandidates } from "./public/search-ranking.js";
 import { chapterTitleCatalog } from "./public/chapter-titles.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -1467,6 +1468,9 @@ async function handleApi(req, res, url) {
     if (!rows.length) {
       rows = await findHtsFallbackRows(searchPlan.primaryQuery, force);
     }
+    const exactMatches = rows.filter((row) => row.searchMatch?.tier === "exact").length;
+    const highRelevance = rows.filter((row) => row.searchMatch?.tier !== "related").length;
+    const relatedCandidates = rows.filter((row) => row.searchMatch?.tier === "related").length;
     sendJson(res, 200, {
       originalQuery,
       query: searchPlan.displayQuery,
@@ -1478,6 +1482,7 @@ async function handleApi(req, res, url) {
             ...(prefixExpansion.truncated ? ["结果较多，当前显示前 300 条"] : [])
           ]
         : searchPlan.hints || [],
+      matchSummary: { exactMatches, highRelevance, relatedCandidates },
       count: rows.length,
       value: rows
     });
@@ -2690,40 +2695,23 @@ async function searchHtsRowsByPlan(searchPlan, force = false) {
 async function searchStaticIndexRowsByPlan(searchPlan) {
   const indexPath = path.join(publicDir, "data", "hts-search-index.json");
   const data = JSON.parse(await readFile(indexPath, "utf8"));
-  const rows = buildServerSearchCandidates(data.value || [])
-    .map((candidate) => ({ row: candidate.row, score: scoreServerSearchCandidate(candidate, searchPlan.plan) }))
-    .filter((item) => item.row.htsno && item.score > 0)
-    .sort((a, b) => b.score - a.score || String(a.row.htsno || "").localeCompare(String(b.row.htsno || "")))
-    .map((item) => item.row)
-    .slice(0, 300);
-  return rows;
+  return rankHtsSearchCandidates(
+    buildClassificationCandidates(data.value || []),
+    searchPlan.plan,
+    { limit: 300 }
+  ).map((item) => item.row);
 }
 
 function buildServerSearchCandidates(rows) {
-  const stack = [];
-  return rows.map((row) => {
-    const indent = Number(row.indent || 0);
-    while (stack.length && stack[stack.length - 1].indent >= indent) {
-      stack.pop();
-    }
-
-    const ownText = `${row.description || ""} ${row.descriptionZh || ""}`;
-    const parentText = stack.map((item) => item.text).join(" ");
-
-    if (ownText.trim()) {
-      stack.push({ indent, text: ownText });
-    }
-
-    return { row, ownText, parentText };
-  });
+  return buildClassificationCandidates(rows);
 }
 
 function rankRowsBySearchPlan(rows, plan) {
-  return rows
-    .map((row) => ({ row, score: scoreServerSearchRow(row, plan) }))
-    .filter((item) => item.score > 0)
-    .sort((a, b) => b.score - a.score || String(a.row.htsno || "").localeCompare(String(b.row.htsno || "")))
-    .map((item) => item.row);
+  return rankHtsSearchCandidates(
+    buildServerSearchCandidates(rows),
+    plan,
+    { limit: 300 }
+  ).map((item) => item.row);
 }
 
 function scoreServerSearchCandidate(candidate, plan) {

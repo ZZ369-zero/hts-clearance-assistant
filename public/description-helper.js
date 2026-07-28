@@ -158,7 +158,10 @@ export function buildClassificationCandidates(rows = []) {
       stack.pop();
     }
 
-    const classificationPath = stack.map(({ indent: _indent, ...item }) => ({ ...item }));
+    const generatedPath = stack.map(({ indent: _indent, ...item }) => ({ ...item }));
+    const classificationPath = Array.isArray(row.classificationPath)
+      ? row.classificationPath.map(({ classificationPath: _nestedPath, ...item }) => ({ ...item }))
+      : generatedPath;
     const rowWithContext = {
       ...row,
       classificationPath

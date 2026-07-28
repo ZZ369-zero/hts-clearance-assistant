@@ -129,6 +129,25 @@ assert(
   "中英夹杂描述不得作为合格中文展示"
 );
 
+const preservedHierarchy = buildClassificationCandidates([
+  {
+    htsno: "4016.99.30.00",
+    indent: 4,
+    description: "Vibration control goods",
+    classificationPath: [
+      {
+        htsno: "4016",
+        description: "Other articles of vulcanized rubber other than hard rubber:",
+        descriptionZh: "硬质橡胶除外的其他硫化橡胶制品："
+      }
+    ]
+  }
+]).at(0).row;
+assert(
+  preservedHierarchy.classificationPath.at(0)?.htsno === "4016",
+  "静态检索索引已保存的官方分类路径不得被扁平索引再次计算覆盖"
+);
+
 const chapter85 = JSON.parse(readFileSync(new URL("../public/data/chapters/85.json", import.meta.url), "utf8"));
 const sixDigitExpansion = expandHtsPrefixRows(chapter85.value || [], "852491");
 const expandedCodes = sixDigitExpansion.rows.map((row) => String(row.htsno || "").replace(/\D/g, ""));
