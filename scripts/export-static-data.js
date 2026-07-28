@@ -3,6 +3,12 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
+import {
+  buildClassificationCandidates,
+  getExactDescriptionZh,
+  getPreferredDescriptionZh,
+  isUsableChineseDescription
+} from "../public/description-helper.js";
 import { buildLegacyForcedLabor301Snapshot, buildPolicyRulesSnapshot } from "./policy-rule-monitor.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -72,7 +78,7 @@ const sourceLabels = {
   adcvdOfficial: ["AD/CVD official ACCESS", "ITA ACCESS AD/CVD", "Official ACCESS status monitor.", "https://access.trade.gov/adcvd"],
   adcvdLocal: ["AD/CVD HTS match dataset", "Local AD/CVD data snapshot", "HTS match snapshot used by the static site.", "https://access.trade.gov/adcvd"],
   fdaFlags: ["FDA FD1-FD4 HTS flags", "FDA / CustomsInfo public OGA lists", "FDA flag meanings and exact HTS code lists used for FD1-FD4 entry prompts.", "https://www.fda.gov/industry/import-basics/harmonized-tariff-schedule-and-fd-flags"],
-  translations: ["Description translation cache", "Generated cache", "Weekly helper cache for bilingual descriptions.", ""]
+  translations: ["商品中文描述缓存", "构建期校核缓存", "发布前整理并校验的双语商品描述；访客浏览时不再逐条等待在线翻译。", ""]
 };
 
 main().catch((error) => {
@@ -164,7 +170,7 @@ async function exportHts(manifest) {
     const rows = data.value || [];
     totalRows += rows.length;
     await writeJson(path.join(chaptersDir, `${chapter}.json`), data);
-    for (const row of rows) {
+    for (const { row } of buildClassificationCandidates(rows)) {
       if (row.htsno) {
         searchRows.push(row);
       }
@@ -476,15 +482,81 @@ function sanitizeAdCvdSnapshot(data) {
 }
 
 async function exportTranslations(manifest) {
-  console.log("Writing translation cache placeholder...");
+  console.log("Building verified description translation cache...");
   const old = await readJsonSafe(path.join(dataDir, "translations.json"), { generatedAt: "", values: {} });
+  const index = await readJsonSafe(path.join(dataDir, "hts-search-index.json"), { value: [] });
+  const chapterRows = [];
+  for (const [chapter] of manifest.chapters || []) {
+    const data = await readJsonSafe(path.join(chaptersDir, `${chapter}.json`), { value: [] });
+    chapterRows.push(...(data.value || []));
+  }
+  const rows = chapterRows.length ? chapterRows : (index.value || []);
+  const values = {};
+  const methods = {};
+
+  for (const [description, translation] of Object.entries(old.values || {})) {
+    if (description && isUsableChineseDescription(translation)) {
+      values[description] = String(translation).trim();
+      methods[description] = old.methods?.[description] || "local-glossary";
+    }
+  }
+
+  let coveredRows = 0;
+  const descriptions = new Set();
+  for (const row of rows) {
+    const description = String(row.description || "").trim();
+    if (!description) {
+      continue;
+    }
+    descriptions.add(description);
+    const exact = getExactDescriptionZh(row);
+    const translation = exact || values[description] || getPreferredDescriptionZh(row) || "";
+    if (isUsableChineseDescription(translation)) {
+      values[description] = translation;
+      methods[description] = exact ? "curated" : (methods[description] || "local-glossary");
+      coveredRows += 1;
+    }
+  }
+  for (const description of Object.keys(values)) {
+    if (!descriptions.has(description)) {
+      delete values[description];
+      delete methods[description];
+    }
+  }
+  const calibratedDescriptions = Object.values(methods)
+    .filter((method) => method === "curated" || method === "github-models").length;
+  const attempts = Object.fromEntries(
+    Object.entries(old.attempts || {})
+      .filter(([description, count]) => descriptions.has(description) && Number(count) > 0)
+  );
+
   const data = {
     generatedAt: now,
-    values: old.values || {}
+    sourceGeneratedAt: index.generatedAt || "",
+    coverage: {
+      totalRows: rows.length,
+      coveredRows,
+      totalDescriptions: descriptions.size,
+      cachedDescriptions: Object.keys(values).length,
+      pendingDescriptions: Math.max(0, descriptions.size - Object.keys(values).length),
+      calibratedDescriptions,
+      pendingCalibration: Math.max(0, descriptions.size - calibratedDescriptions)
+    },
+    values,
+    methods,
+    attempts
   };
   await writeJson(path.join(dataDir, "translations.json"), data);
   manifest.counts = { ...(manifest.counts || {}), translations: Object.keys(data.values).length };
-  setSourceState(manifest, "translations", { count: Object.keys(data.values).length, fetchedAt: now });
+  setSourceState(manifest, "translations", {
+    count: Object.keys(data.values).length,
+    coveredRows,
+    totalRows: rows.length,
+    pendingDescriptions: data.coverage.pendingDescriptions,
+    calibratedDescriptions,
+    pendingCalibration: data.coverage.pendingCalibration,
+    fetchedAt: now
+  });
 }
 
 function expandScope(value) {

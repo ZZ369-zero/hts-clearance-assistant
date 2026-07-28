@@ -79,7 +79,6 @@ const state = {
   additionalDutyBreakdown: [],
   compoundGeneralDuty: null,
   cottonAssessmentRequestId: 0,
-  translationRequestId: 0,
   baseRateMessage: "",
   cottonAssessment: null,
   feeMatches: [],
@@ -95,6 +94,8 @@ const state = {
   fdaFlags: null,
   section122ExclusionPrefixes: [...section122FallbackExclusionPrefixes],
   section122ExclusionsSource: "内置 Annex II 兜底清单",
+  descriptionTranslations: new Map(),
+  descriptionTranslationCoverage: null,
   chapters: []
 };
 
@@ -388,7 +389,8 @@ async function init() {
     loadPolicyRules(),
     loadForcedLaborExemptions(),
     loadFdaFlags(),
-    loadSection122Exclusions()
+    loadSection122Exclusions(),
+    loadDescriptionTranslations()
   ]);
   setInterval(loadSyncStatus, 60 * 1000);
   showSearchPrompt();
@@ -549,6 +551,21 @@ function setTheme(theme, { persist = false } = {}) {
     } catch {
       // Theme persistence is optional when browser storage is unavailable.
     }
+  }
+}
+
+async function loadDescriptionTranslations(force = false) {
+  try {
+    const data = await loadStaticData("translations.json", force);
+    state.descriptionTranslations = new Map(
+      Object.entries(data.values || {})
+        .filter(([, translation]) => isUsableChineseDescription(translation))
+    );
+    state.descriptionTranslationCoverage = data.coverage || null;
+  } catch (error) {
+    state.descriptionTranslations = new Map();
+    state.descriptionTranslationCoverage = null;
+    console.warn(`Description translation cache unavailable: ${error.message}`);
   }
 }
 
@@ -758,14 +775,15 @@ async function search(query, force = false) {
   }
 
   state.dataKind = "search";
-  state.translationRequestId += 1;
   setMode("search");
   state.lastQuery = query;
   els.queryInput.value = query;
   setLoading(true);
   try {
     const data = await api(`/api/search?q=${encodeURIComponent(query)}${force ? "&refresh=1" : ""}`);
-    state.rows = await attachClassificationPaths(data.value || [], force);
+    state.rows = hydrateDescriptionTranslations(
+      await attachClassificationPaths(data.value || [], force)
+    );
     state.visibleRows = state.rows;
     state.dataKind = "search";
     saveSearchHistory(query);
@@ -780,7 +798,6 @@ async function search(query, force = false) {
     renderSearchGuide(data.hints || []);
     renderRows(state.visibleRows);
     selectFirstSelectable();
-    enhanceSearchResultTranslations(state.visibleRows);
   } catch (error) {
     showMessage(error.message);
   } finally {
@@ -789,7 +806,6 @@ async function search(query, force = false) {
 }
 
 async function loadChapter(chapter, force = false) {
-  state.translationRequestId += 1;
   state.lastChapter = chapter;
   els.chapterSelect.value = chapter;
   state.dataKind = "chapter";
@@ -807,7 +823,6 @@ async function loadChapter(chapter, force = false) {
     els.chapterFilter.value = "";
     renderRows(state.visibleRows);
     selectFirstSelectable();
-    enhanceSearchResultTranslations(state.visibleRows);
   } catch (error) {
     showMessage(error.message);
   } finally {
@@ -823,6 +838,7 @@ async function refreshData() {
     await loadForcedLaborExemptions(true);
     await loadFdaFlags(true);
     await loadSection122Exclusions(true);
+    await loadDescriptionTranslations(true);
     await loadStatus(true);
     await loadSyncStatus();
     if (state.mode === "chapter") {
@@ -848,99 +864,6 @@ function filterChapterRows() {
     : state.rows;
   renderRows(state.visibleRows);
   selectFirstSelectable();
-}
-
-async function enhanceSearchResultTranslations(rows) {
-  const requestId = ++state.translationRequestId;
-  const descriptionRows = rows.flatMap((row) => [row, ...(row.classificationPath || [])]);
-  const descriptions = [...new Set(descriptionRows
-    .filter(needsTranslationEnhancement)
-    .map((row) => row.description)
-    .filter(Boolean))].slice(0, 24);
-
-  if (!descriptions.length) {
-    return;
-  }
-
-  await mapLimit(descriptions, 3, async (description) => {
-    try {
-      const translation = await requestDescriptionTranslation(description);
-      if (requestId !== state.translationRequestId || !translation) {
-        return;
-      }
-      applyDescriptionTranslation(description, translation);
-    } catch {
-      // Keep existing local translation if automatic translation is unavailable.
-    }
-  });
-}
-
-async function enhanceSelectedDescription(row) {
-  const selectedKey = rowKey(row);
-  const descriptions = [...new Set([...(row.classificationPath || []), row]
-    .filter(needsTranslationEnhancement)
-    .map((item) => item.description)
-    .filter(Boolean))];
-  if (!descriptions.length) {
-    return;
-  }
-
-  await mapLimit(descriptions, 2, async (description) => {
-    const translation = await requestDescriptionTranslation(description).catch(() => "");
-    if (!translation || !state.selected || rowKey(state.selected) !== selectedKey) {
-      return;
-    }
-    applyDescriptionTranslation(description, translation);
-  });
-}
-
-const pendingDescriptionTranslations = new Map();
-
-async function requestDescriptionTranslation(description) {
-  if (!description) {
-    return "";
-  }
-  if (pendingDescriptionTranslations.has(description)) {
-    return pendingDescriptionTranslations.get(description);
-  }
-  const request = api(`/api/translate-description?text=${encodeURIComponent(description)}`)
-    .then((data) => data.translation || "")
-    .finally(() => pendingDescriptionTranslations.delete(description));
-  pendingDescriptionTranslations.set(description, request);
-  return request;
-}
-
-function needsTranslationEnhancement(row) {
-  return Boolean(row.description) && !getPreferredDescriptionZh(row);
-}
-
-function applyDescriptionTranslation(description, translation) {
-  const cleaned = String(translation || "").trim();
-  if (!isUsableChineseDescription(cleaned)) {
-    return;
-  }
-
-  for (const row of state.rows) {
-    applyTranslationToRow(row, description, cleaned);
-  }
-
-  renderRows(state.visibleRows);
-  if (state.selected?.description === description) {
-    els.selectedDescription.innerHTML = `<span class="zh-line">${escapeHtml(displayZhDescription(state.selected))}</span>`;
-    els.miniProductDescription.textContent = displayZhDescription(state.selected);
-  }
-  renderClassificationPath(state.selected);
-}
-
-function applyTranslationToRow(row, description, translation) {
-  if (row.description === description) {
-    row.descriptionZh = translation;
-  }
-  for (const parent of row.classificationPath || []) {
-    if (parent.description === description) {
-      parent.descriptionZh = translation;
-    }
-  }
 }
 
 function renderRows(rows) {
@@ -1456,7 +1379,6 @@ function selectRow(index) {
   applyRate(row);
   loadAdditionalDuties(row);
   loadCottonAssessment(row);
-  enhanceSelectedDescription(row);
 }
 
 function renderDetail(row) {
@@ -1534,16 +1456,17 @@ function renderClassificationPath(row) {
 
   const hierarchy = row ? [...(row.classificationPath || []), row] : [];
   const missingCount = hierarchy.filter((item) => !getPreferredDescriptionZh(item)).length;
+  const translatedCount = hierarchy.length - missingCount;
   els.classificationPath.classList.toggle("hidden", !row);
   if (els.classificationDescriptionStatus) {
     els.classificationDescriptionStatus.textContent = missingCount
-      ? `正在补充 ${missingCount} 项中文说明`
+      ? `已显示 ${translatedCount} 项校核中文，${missingCount} 项保留官方英文`
       : `已整理 ${hierarchy.length} 级归类说明`;
-    els.classificationDescriptionStatus.classList.toggle("is-loading", missingCount > 0);
+    els.classificationDescriptionStatus.classList.remove("is-loading");
   }
   els.classificationPathList.innerHTML = hierarchy
     .map((item, index) => {
-      const zh = getPreferredDescriptionZh(item) || "中文说明生成中...";
+      const zh = getPreferredDescriptionZh(item) || "暂无校核中文译文（请参阅英文官方原文）";
       return `
         <li class="${index === hierarchy.length - 1 ? "is-leaf" : ""}">
           <span class="description-level-code">${escapeHtml(item.htsno || `第 ${index + 1} 级`)}</span>
@@ -2692,12 +2615,11 @@ async function staticApi(path, options = {}) {
   if (pathname === "/api/translate-description") {
     const text = String(url.searchParams.get("text") || "");
     const translations = await loadStaticData("translations.json").catch(() => ({ values: {} }));
-    const cached = getClientTranslation(text);
-    const translation = translations.values?.[text] || cached || await translateDescriptionInBrowser(text);
+    const translation = translations.values?.[text] || "";
     return {
       text,
       translation,
-      source: translations.values?.[text] ? "static" : cached ? "browser-cache" : "MyMemory"
+      source: translation ? "verified-static-cache" : "not-reviewed"
     };
   }
 
@@ -2776,7 +2698,7 @@ async function staticSearch(query, force = false) {
 }
 
 function buildStaticSearchCandidates(rows) {
-  return buildClassificationCandidates(rows);
+  return buildClassificationCandidates(hydrateDescriptionTranslations(rows));
 }
 
 function buildStaticSearchPlan(query, translatedQuery = "") {
@@ -3334,45 +3256,24 @@ function rowKey(row) {
 }
 
 function displayZhDescription(row) {
-  return getPreferredDescriptionZh(row) || "中文辅助生成中...";
+  return getPreferredDescriptionZh(row) || "暂无校核中文译文";
 }
 
-const clientTranslationStorageKey = "hts-description-translations-v2";
-
-function getClientTranslation(text) {
-  try {
-    const values = JSON.parse(localStorage.getItem(clientTranslationStorageKey) || "{}");
-    const translation = String(values[text] || "").trim();
-    return isUsableChineseDescription(translation) ? translation : "";
-  } catch {
-    return "";
-  }
+function hydrateDescriptionTranslations(rows = []) {
+  return rows.map((row) => hydrateDescriptionRow(row));
 }
 
-function setClientTranslation(text, translation) {
-  if (!text || !isUsableChineseDescription(translation)) {
-    return;
-  }
-  try {
-    const values = JSON.parse(localStorage.getItem(clientTranslationStorageKey) || "{}");
-    values[text] = translation;
-    const entries = Object.entries(values).slice(-500);
-    localStorage.setItem(clientTranslationStorageKey, JSON.stringify(Object.fromEntries(entries)));
-  } catch {
-    // Translation caching is optional when browser storage is unavailable.
-  }
-}
-
-async function translateDescriptionInBrowser(text) {
-  if (!text) {
-    return "";
-  }
-  const translation = await translateTextWithMyMemory(text, "en|zh-CN");
-  if (!isUsableChineseDescription(translation)) {
-    return "";
-  }
-  setClientTranslation(text, translation);
-  return translation;
+function hydrateDescriptionRow(row = {}) {
+  const cached = state.descriptionTranslations.get(String(row.description || "").trim()) || "";
+  const descriptionZh = getPreferredDescriptionZh(row)
+    || (isUsableChineseDescription(cached) ? cached : "");
+  return {
+    ...row,
+    descriptionZh,
+    classificationPath: Array.isArray(row.classificationPath)
+      ? row.classificationPath.map((item) => hydrateDescriptionRow(item))
+      : row.classificationPath
+  };
 }
 
 const clientSearchTranslationStorageKey = "hts-search-translations-v1";
@@ -3428,18 +3329,6 @@ function decodeHtmlText(value) {
 
 function hasChineseText(value) {
   return /[\u3400-\u9fff]/.test(String(value || ""));
-}
-
-async function mapLimit(items, limit, worker) {
-  let index = 0;
-  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
-    while (index < items.length) {
-      const item = items[index];
-      index += 1;
-      await worker(item);
-    }
-  });
-  await Promise.all(workers);
 }
 
 function escapeHtml(value) {

@@ -10,6 +10,18 @@ const htsDescriptionOverrides = new Map([
   [
     "1704905200",
     "根据《美国协调关税税则》总注释15的描述并按其规定申报的糖食。"
+  ],
+  [
+    "8501",
+    "电动机和发电机（不包括发电机组）："
+  ],
+  [
+    "850152",
+    "输出功率超过750瓦但不超过75千瓦："
+  ],
+  [
+    "8501524000",
+    "输出功率超过750瓦但不超过14.92千瓦。"
   ]
 ]);
 
@@ -41,19 +53,59 @@ const englishDescriptionOverrides = new Map([
   [
     "3 to 12 years of age",
     "适用于3至12岁儿童。"
+  ],
+  [
+    "electric motors and generators (excluding generating sets)",
+    "电动机和发电机（不包括发电机组）："
+  ],
+  [
+    "other alternating-current motors, multiphase",
+    "其他多相交流电动机："
+  ],
+  [
+    "other ac motors, multi-phase",
+    "其他多相交流电动机："
+  ],
+  [
+    "other ac motors, single-phase",
+    "其他单相交流电动机："
+  ],
+  [
+    "of an output exceeding 750 w but not exceeding 75 kw",
+    "输出功率超过750瓦但不超过75千瓦："
+  ],
+  [
+    "exceeding 750 w but not exceeding 14.92 kw",
+    "输出功率超过750瓦但不超过14.92千瓦。"
+  ],
+  [
+    "brushless",
+    "无刷式。"
+  ],
+  [
+    "dairy",
+    "乳用："
+  ],
+  [
+    "live bovine animals",
+    "活牛科动物："
   ]
 ]);
 
 const allowedEnglishTokens = new Set([
+  "ac",
   "ad",
   "cif",
   "cfr",
+  "dc",
   "dvd",
   "fda",
   "hts",
   "htsus",
+  "lcd",
   "led",
   "nesoi",
+  "oled",
   "rom",
   "usb"
 ]);
@@ -74,14 +126,18 @@ export function getExactDescriptionZh(row = {}) {
 
 export function isUsableChineseDescription(value) {
   const text = String(value || "").trim();
-  if (!/[\u3400-\u9fff]/.test(text) || /中文(?:释义|辅助)待(?:核|完善)/.test(text)) {
+  if (
+    !/[\u3400-\u9fff]/.test(text)
+    || /中文(?:释义|辅助|说明)(?:生成中|待(?:核|完善|校核))/.test(text)
+    || /\b(?:generating|generator|sets?)\b/i.test(text)
+  ) {
     return false;
   }
 
   const englishWords = text.match(/[A-Za-z][A-Za-z-]{1,}/g) || [];
   const unexplainedWords = englishWords.filter((word) => !allowedEnglishTokens.has(word.toLowerCase()));
   const chineseCount = (text.match(/[\u3400-\u9fff]/g) || []).length;
-  return unexplainedWords.length <= 1 && chineseCount >= Math.max(2, unexplainedWords.join("").length);
+  return unexplainedWords.length === 0 && chineseCount >= 1;
 }
 
 export function getPreferredDescriptionZh(row = {}) {

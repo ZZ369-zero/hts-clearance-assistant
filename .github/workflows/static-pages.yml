@@ -35,11 +35,12 @@ on:
     - cron: "47 2 * * *"
     # Cotton Import Assessment: every 24 hours.
     - cron: "37 3 * * *"
-    # Translation helper cache: weekly.
-    - cron: "47 4 * * 1"
+    # Chinese description cache: daily until full coverage, then incremental.
+    - cron: "47 4 * * *"
 
 permissions:
   contents: write
+  models: read
   pages: write
   id-token: write
 
@@ -86,7 +87,7 @@ jobs:
               "27 2 * * *") scope="adcvd" ;;
               "47 2 * * *") scope="fdaFlags" ;;
               "37 3 * * *") scope="cotton" ;;
-              "47 4 * * 1") scope="translations" ;;
+              "47 4 * * *") scope="translations" ;;
               *) scope="all" ;;
             esac
           else
@@ -97,6 +98,18 @@ jobs:
 
       - name: Export static data
         run: node scripts/export-static-data.js --scope "${{ steps.scope.outputs.scope }}"
+
+      - name: Generate and validate Chinese descriptions
+        if: contains(steps.scope.outputs.scope, 'translations') || steps.scope.outputs.scope == 'all'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TRANSLATION_BATCH_LIMIT: "2000"
+          TRANSLATION_BATCH_SIZE: "20"
+          GITHUB_MODELS_MODEL: "openai/gpt-4o-mini"
+        run: node scripts/translate-descriptions-github-models.js
+
+      - name: Run description translation checks
+        run: npm run check:descriptions
 
       - name: Run policy sentinel checks
         run: npm run check:policy-sentinel
