@@ -12,6 +12,7 @@
     "export:static:section232": "node scripts/export-static-data.js --scope section232",
     "export:static:adcvd": "node scripts/export-static-data.js --scope adcvd",
     "export:static:cotton": "node scripts/export-static-data.js --scope cotton",
+    "export:static:epa-flags": "node scripts/export-static-data.js --scope epaFlags",
     "export:static:fda-flags": "node scripts/export-static-data.js --scope fdaFlags",
     "export:static:forced-labor-exemptions": "node scripts/export-static-data.js --scope forcedLaborExemptions",
     "export:static:translations": "node scripts/export-static-data.js --scope translations",

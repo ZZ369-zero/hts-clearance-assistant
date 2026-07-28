@@ -14,7 +14,7 @@ import {
   getCertificationStatusMeta,
   matchCertificationRules,
   summarizeCertificationMatches
-} from "./certification-rule-engine.js?v=20260728-fda-flags";
+} from "./certification-rule-engine.js?v=20260729-epa-ep5";
 import {
   buildClassificationCandidates,
   expandHtsPrefixRows,
@@ -92,6 +92,7 @@ const state = {
   lastChapter: "01",
   policyRules: null,
   forcedLaborExemptions: null,
+  epaFlags: null,
   fdaFlags: null,
   section122ExclusionPrefixes: [...section122FallbackExclusionPrefixes],
   section122ExclusionsSource: "内置 Annex II 兜底清单",
@@ -389,6 +390,7 @@ async function init() {
     loadSyncStatus(),
     loadPolicyRules(),
     loadForcedLaborExemptions(),
+    loadEpaFlags(),
     loadFdaFlags(),
     loadSection122Exclusions(),
     loadDescriptionTranslations()
@@ -442,6 +444,16 @@ async function loadFdaFlags(force = false) {
   } catch (error) {
     state.fdaFlags = null;
     console.warn(`FDA FD flag list unavailable: ${error.message}`);
+  }
+}
+
+async function loadEpaFlags(force = false) {
+  try {
+    const data = await loadStaticData("epa-flags.json", force);
+    state.epaFlags = data?.codes ? data : null;
+  } catch (error) {
+    state.epaFlags = null;
+    console.warn(`EPA EP5 flag list unavailable: ${error.message}`);
   }
 }
 
@@ -837,6 +849,7 @@ async function refreshData() {
     await api("/api/refresh", { method: "POST" });
     await loadPolicyRules(true);
     await loadForcedLaborExemptions(true);
+    await loadEpaFlags(true);
     await loadFdaFlags(true);
     await loadSection122Exclusions(true);
     await loadDescriptionTranslations(true);
@@ -1433,6 +1446,7 @@ function renderDetail(row) {
   els.detailUnits.textContent = row.units?.length ? row.units.join(", ") : "--";
   state.certificationMatches = matchCertificationRules(row, {
     query: getCertificationContextQuery(),
+    epaFlags: state.epaFlags,
     fdaFlags: state.fdaFlags
   });
   renderCertificationPanel(row);

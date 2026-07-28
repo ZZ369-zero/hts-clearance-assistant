@@ -20,6 +20,7 @@ on:
           - section232
           - adcvd
           - cotton
+          - epaFlags
           - fdaFlags
           - translations
   schedule:
@@ -31,7 +32,7 @@ on:
     - cron: "17 */6 * * *"
     # AD/CVD official monitor and static match snapshot: every 24 hours.
     - cron: "27 2 * * *"
-    # FDA FD1-FD4 HTS flag lists: every 24 hours.
+    # EPA EP5 and FDA FD1-FD4 HTS flag lists: every 24 hours.
     - cron: "47 2 * * *"
     # Cotton Import Assessment: every 24 hours.
     - cron: "37 3 * * *"
@@ -85,7 +86,7 @@ jobs:
               "57 1 * * *") scope="section122" ;;
               "17 */6 * * *") scope="section232" ;;
               "27 2 * * *") scope="adcvd" ;;
-              "47 2 * * *") scope="fdaFlags" ;;
+              "47 2 * * *") scope="epaFlags,fdaFlags" ;;
               "37 3 * * *") scope="cotton" ;;
               "47 4 * * *") scope="translations" ;;
               *) scope="all" ;;

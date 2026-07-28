@@ -56,6 +56,10 @@ const syncSourceConfig = {
     ids: ["adcvdOfficial", "adcvdLocal"],
     minutes: 1440
   },
+  epaFlags: {
+    ids: ["epaFlags"],
+    minutes: 1440
+  },
   fdaFlags: {
     ids: ["fdaFlags"],
     minutes: 1440
@@ -77,6 +81,7 @@ const sourceLabels = {
   cotton: ["Cotton Import Assessment", "eCFR 7 CFR 1205", "Cotton import assessment table.", "https://www.ecfr.gov/current/title-7/subtitle-B/chapter-XI/part-1205/subpart-ECFR80efc31412f8612"],
   adcvdOfficial: ["AD/CVD official ACCESS", "ITA ACCESS AD/CVD", "Official ACCESS status monitor.", "https://access.trade.gov/adcvd"],
   adcvdLocal: ["AD/CVD HTS match dataset", "Local AD/CVD data snapshot", "HTS match snapshot used by the static site.", "https://access.trade.gov/adcvd"],
+  epaFlags: ["EPA ACE EP5 HTS flags", "EPA / CustomsInfo public OGA list", "EPA EP5 exact HTS flags used for pesticide and device import filing prompts.", "https://www.epa.gov/compliance/importing-and-exporting-pesticides-and-devices"],
   fdaFlags: ["FDA FD1-FD4 HTS flags", "FDA / CustomsInfo public OGA lists", "FDA flag meanings and exact HTS code lists used for FD1-FD4 entry prompts.", "https://www.fda.gov/industry/import-basics/harmonized-tariff-schedule-and-fd-flags"],
   translations: ["商品中文描述缓存", "构建期校核缓存", "发布前整理并校验的双语商品描述；访客浏览时不再逐条等待在线翻译。", ""]
 };
@@ -129,6 +134,9 @@ async function main() {
     }
     if (selected.includes("adcvd")) {
       await exportAdCvd(manifest);
+    }
+    if (selected.includes("epaFlags")) {
+      await exportEpaFlags(manifest);
     }
     if (selected.includes("fdaFlags")) {
       await exportFdaFlags(manifest);
@@ -467,6 +475,60 @@ async function exportFdaFlags(manifest) {
   });
 }
 
+async function exportEpaFlags(manifest) {
+  console.log("Exporting EPA ACE EP5 HTS flag list...");
+  const filePath = path.join(dataDir, "epa-flags.json");
+  const old = await readJsonSafe(filePath, null);
+  let data;
+
+  try {
+    const pythonCommand = process.env.PYTHON || "python";
+    const parserPath = path.join(__dirname, "parse-epa-flags.py");
+    const result = await execFileAsync(pythonCommand, [parserPath], {
+      cwd: rootDir,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        PYTHONIOENCODING: "utf-8"
+      },
+      maxBuffer: 8 * 1024 * 1024,
+      timeout: 4 * 60 * 1000
+    });
+    data = JSON.parse(result.stdout);
+  } catch (error) {
+    if (!old?.codes || Object.keys(old.codes).length === 0) {
+      throw error;
+    }
+    console.warn(`EPA EP5 flag export failed, keeping previous snapshot: ${error.message}`);
+    data = {
+      ...old,
+      generatedAt: now,
+      retainedPreviousRows: true,
+      warning: error.message
+    };
+  }
+
+  if (!data.codes?.["8509805095"]?.some((record) => record.flag === "EP5")) {
+    throw new Error("EPA EP5 flag export failed sentinel: 8509.80.5095 is not present in EP5.");
+  }
+
+  await writeJson(filePath, data);
+  manifest.counts = {
+    ...(manifest.counts || {}),
+    epaFlagRows: data.count || 0,
+    epaFlagCodes: data.uniqueCodeCount || Object.keys(data.codes || {}).length
+  };
+  setSourceState(manifest, "epaFlags", {
+    count: data.count || 0,
+    uniqueCodeCount: data.uniqueCodeCount || Object.keys(data.codes || {}).length,
+    datasetDates: Object.fromEntries(
+      Object.entries(data.flags || {}).map(([flag, item]) => [flag, item.datasetDate || ""])
+    ),
+    providerName: data.source?.providerName,
+    fetchedAt: data.generatedAt || now
+  });
+}
+
 function sanitizeAdCvdSnapshot(data) {
   const source = { ...(data.source || {}) };
   delete source.csvPath;
@@ -561,7 +623,7 @@ async function exportTranslations(manifest) {
 
 function expandScope(value) {
   if (!value || value === "all") {
-    return ["hts", "policyRules", "forcedLabor301", "forcedLaborExemptions", "section122", "section232", "cotton", "adcvd", "fdaFlags", "translations"];
+    return ["hts", "policyRules", "forcedLabor301", "forcedLaborExemptions", "section122", "section232", "cotton", "adcvd", "epaFlags", "fdaFlags", "translations"];
   }
   return [...new Set(String(value).split(",").map((item) => item.trim()).filter(Boolean))];
 }
@@ -652,13 +714,14 @@ function countForSource(id, counts) {
   if (id === "section232") return counts.section232Rows || 0;
   if (id === "cotton") return counts.cottonRows || 0;
   if (id === "adcvdLocal") return counts.adcvdRows || 0;
+  if (id === "epaFlags") return counts.epaFlagRows || 0;
   if (id === "fdaFlags") return counts.fdaFlagRows || 0;
   if (id === "translations") return counts.translations || 0;
   return 1;
 }
 
 function sourceOrder(id) {
-  return ["htsStatus", "chapter99", "policyRules", "forcedLabor301", "forcedLaborExemptions", "section122", "section232", "cotton", "adcvdOfficial", "adcvdLocal", "fdaFlags", "translations"].indexOf(id);
+  return ["htsStatus", "chapter99", "policyRules", "forcedLabor301", "forcedLaborExemptions", "section122", "section232", "cotton", "adcvdOfficial", "adcvdLocal", "epaFlags", "fdaFlags", "translations"].indexOf(id);
 }
 
 async function startServer() {

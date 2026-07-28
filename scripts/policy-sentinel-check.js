@@ -22,7 +22,7 @@ main().catch((error) => {
 });
 
 async function main() {
-  const [manifest, searchIndex, chapter99, policyRules, forcedLabor301, forcedLaborExemptions, section122, section232, cotton, adCvd, fdaFlags] = await Promise.all([
+  const [manifest, searchIndex, chapter99, policyRules, forcedLabor301, forcedLaborExemptions, section122, section232, cotton, adCvd, epaFlags, fdaFlags] = await Promise.all([
     readJson(path.join(dataDir, "manifest.json")),
     readJson(path.join(dataDir, "hts-search-index.json")),
     readJson(path.join(dataDir, "chapter99.json")),
@@ -33,6 +33,7 @@ async function main() {
     readJson(path.join(dataDir, "section232.json")),
     readJson(path.join(dataDir, "cotton.json")),
     readJson(path.join(dataDir, "adcvd.json")),
+    readJson(path.join(dataDir, "epa-flags.json")),
     readJson(path.join(dataDir, "fda-flags.json"))
   ]);
 
@@ -48,6 +49,7 @@ async function main() {
   checkTextile6307909891Outcome(searchIndex);
   checkCertificationPrompt(searchIndex, fdaFlags);
   checkFdaFd1PrinterPrompt(searchIndex, fdaFlags);
+  checkEpaEp5AndDoeFtcPrompts(searchIndex, epaFlags);
   checkSection232Snapshot(section232);
   checkCottonSnapshot(cotton);
   checkAdCvdSnapshot(adCvd);
@@ -273,6 +275,46 @@ function checkFdaFd1PrinterPrompt(searchIndex, fdaFlags) {
     "8443310000 resolves to FDA FD1 exact HTS flag",
     Boolean(fd1 && fd1.matchedExactCodes?.includes("8443310000")),
     fd1 ? `matchedBy=${fd1.matchedBy}` : `matches=${matches.map((match) => match.id).join(",") || "none"}`
+  );
+}
+
+function checkEpaEp5AndDoeFtcPrompts(searchIndex, epaFlags) {
+  const applianceRow = findRowByDigits(searchIndex, "8509805095") || {
+    htsno: "8509.80.50.95",
+    description: "Other electromechanical domestic appliances"
+  };
+  const applianceMatches = matchCertificationRules(applianceRow, {
+    query: "8509805095",
+    epaFlags
+  });
+  const applianceIds = applianceMatches.map((match) => match.id);
+  const ep5 = applianceMatches.find((match) => match.id === "epa-flag-ep5");
+  record(
+    "8509805095 resolves to exact EPA EP5 without broad DOE/FTC 8509 hit",
+    Boolean(
+      ep5
+      && ep5.summary === "可能需要 EPA 进口申报"
+      && ep5.matchedExactCodes?.includes("8509805095")
+      && !applianceIds.includes("doe-energy-labeling")
+    ),
+    `matches=${applianceIds.join(",") || "none"}`
+  );
+
+  const ledRow = findRowByDigits(searchIndex, "8539510000") || {
+    htsno: "8539.51.00.00",
+    description: "Light-emitting diode (LED) modules"
+  };
+  const dualMatches = matchCertificationRules(ledRow, {
+    query: "pesticidal LED lamp 9W for pest control",
+    productName: "LED lamp",
+    notes: "120V 9W pesticidal device",
+    epaFlags
+  });
+  const dualIds = dualMatches.map((match) => match.id);
+  record(
+    "EPA EP5 and DOE/FTC prompts remain independent when both apply",
+    dualIds.includes("epa-flag-ep5") && dualIds.includes("doe-energy-labeling"),
+    `matches=${dualIds.join(",") || "none"}`
   );
 }
 

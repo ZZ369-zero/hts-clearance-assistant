@@ -1,4 +1,4 @@
-import { certificationCatalog } from "./certification-catalog.js?v=20260709-fda5";
+import { certificationCatalog } from "./certification-catalog.js?v=20260729-epa-ep5";
 
 const statusMeta = {
   high: {
@@ -36,14 +36,56 @@ export function matchCertificationRules(row, context = {}) {
       return match ? { ...item, ...match } : null;
     })
     .filter(Boolean);
+  const epaFlagMatches = matchEpaFlagRules(htsDigits, context?.epaFlags);
   const fdaFlagMatches = matchFdaFlagRules(htsDigits, context?.fdaFlags);
 
-  return [...fdaFlagMatches, ...catalogMatches]
+  return [...epaFlagMatches, ...fdaFlagMatches, ...catalogMatches]
     .filter((item, index, matches) => {
       const suppressedIds = new Set(matches.flatMap((match) => match.suppresses || []));
       return !suppressedIds.has(item.id);
     })
     .sort((a, b) => (a.sequence || 999) - (b.sequence || 999));
+}
+
+function matchEpaFlagRules(htsDigits, snapshot) {
+  if (!htsDigits || !snapshot?.codes) {
+    return [];
+  }
+
+  const records = snapshot.codes[htsDigits] || [];
+  return records.map((record) => {
+    const flag = String(record.flag || "").toUpperCase();
+    const meta = snapshot.flags?.[flag] || {};
+    const datasetDate = meta.datasetDate || snapshot.generatedAt?.slice(0, 10) || "";
+    const listDescription = String(record.description || "").trim();
+
+    return {
+      id: `epa-flag-${flag.toLowerCase()}`,
+      sequence: 4.8,
+      agency: "EPA / CBP ACE",
+      nameZh: meta.nameZh || `${flag} 可能需要 EPA 进口申报`,
+      nameEn: meta.nameEn || `${flag} EPA Import Filing May Be Required`,
+      category: "pga",
+      status: meta.status || "review",
+      suppresses: ["epa-pesticide-noa"],
+      summary: "可能需要 EPA 进口申报",
+      explanation: [
+        meta.meaningZh || `${flag} 是 EPA/CBP ACE 的精确 HTS 监管标志。`,
+        "EP5 表示农药或农药装置 Notice of Arrival 数据可能需要，不等同于自动判定商品受 FIFRA 监管。",
+        listDescription ? `清单描述：${listDescription}` : "",
+        "应结合产品名称、用途、作用机理、标签宣称和成分判断；实际属于农药或农药装置时，即使 HTS 未标 EP5 也可能必须申报。"
+      ].filter(Boolean).join(" "),
+      sourceName: "EPA Importing and Exporting Pesticides and Devices",
+      sourceUrl: snapshot.source?.officialUrl || "https://www.epa.gov/compliance/importing-and-exporting-pesticides-and-devices",
+      matchedBy: [
+        `${flag} HTS 精确代码 ${formatHtsForDisplay(htsDigits)}`,
+        datasetDate ? `清单日期 ${datasetDate}` : ""
+      ].filter(Boolean).join("；"),
+      matchedExactCodes: [htsDigits],
+      matchedPrefixes: [],
+      matchedKeywords: []
+    };
+  });
 }
 
 function matchFdaFlagRules(htsDigits, snapshot) {

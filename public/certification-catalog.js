@@ -543,14 +543,20 @@ export const certificationCatalog = [
     category: "energy",
     status: "review",
     rule: {
-      mode: "any",
-      prefixes: ["8415", "8418", "8419", "8421", "8450", "8451", "8504", "8509", "8516", "8539", "8541", "9405"],
-      keywords: ["refrigerator", "freezer", "air conditioner", "washer", "dryer", "dishwasher", "water heater", "lamp", "led", "power supply", "solar", "冰箱", "冷柜", "空调", "洗衣机", "烘干机", "洗碗机", "热水器", "灯", "LED", "电源", "太阳能"]
+      mode: "all",
+      prefixes: ["8414", "8415", "8416", "8418", "8419", "8421", "8422", "8450", "8451", "8504", "8509", "8516", "8528", "8539", "8541", "9405"],
+      keywords: [
+        "refrigerator", "refrigerator-freezer", "freezer", "room air conditioner", "central air conditioner",
+        "furnace", "boiler", "heat pump", "pool heater", "water heater", "clothes washer", "dishwasher",
+        "television", "ceiling fan", "general service lamp", "led lamp", "external power supply",
+        "冰箱", "冷藏冷冻箱", "冷柜", "房间空调", "中央空调", "暖炉", "锅炉", "热泵", "泳池加热器",
+        "热水器", "洗衣机", "洗碗机", "电视机", "吊扇", "通用照明灯", "LED 灯", "外部电源"
+      ]
     },
-    summary: "家电、照明、电源适配器、部分暖通和能源产品可能涉及 DOE 能效标准、FTC EnergyGuide 或 Lighting Facts。",
-    explanation: "能效合规通常取决于产品额定参数、用途、型号和销售渠道。HTS 命中时应核对 DOE covered products、认证数据库、测试标准和 FTC 标签规则。",
-    sourceName: "DOE Compliance Certification Database",
-    sourceUrl: "https://www.regulations.doe.gov/certification-data/"
+    summary: "具体受管家电、暖通、照明或外部电源产品可能涉及 DOE 能效标准及 FTC EnergyGuide/能耗标签要求。",
+    explanation: "本提示不再按 8509 或其他整段 HTS 前缀直接命中，而是同时核对 HTS 范围与具体产品名称/用途。最终适用性还需结合额定功率、电压、容量、制冷量、产品类别、型号和销售渠道确认；普通 8509 小家电不会仅因编码前缀被判定为 DOE/FTC 适用。",
+    sourceName: "FTC EnergyGuide Labeling and DOE Covered Products",
+    sourceUrl: "https://www.ftc.gov/business-guidance/resources/energyguide-labeling-faqs-appliance-manufacturers"
   },
   {
     id: "phmsa-lithium-battery-hazmat",
