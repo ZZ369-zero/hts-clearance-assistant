@@ -100,7 +100,7 @@ jobs:
         run: node scripts/export-static-data.js --scope "${{ steps.scope.outputs.scope }}"
 
       - name: Generate and validate Chinese descriptions
-        if: contains(steps.scope.outputs.scope, 'translations') || steps.scope.outputs.scope == 'all'
+        if: github.event_name != 'push' && (contains(steps.scope.outputs.scope, 'translations') || steps.scope.outputs.scope == 'all')
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TRANSLATION_BATCH_LIMIT: "2000"
