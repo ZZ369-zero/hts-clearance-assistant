@@ -126,7 +126,23 @@ export const chineseSearchCatalog = [
   { terms: ["铜线", "铜丝"], queries: ["copper wire", "insulated copper conductors"], chapters: ["74", "85"], prefixBoosts: ["7408", "8544"] },
   { terms: ["五金", "五金件"], queries: ["hardware", "articles of iron or steel", "base metal mountings fittings"], chapters: ["73", "83"], prefixBoosts: ["7326", "8302"] },
 
-  { terms: ["玩具", "儿童玩具"], queries: ["toys", "toy"], chapters: ["95"], prefixBoosts: ["9503"] },
+  {
+    terms: ["玩具", "儿童玩具"],
+    queries: ["toys", "toy"],
+    relatedQueries: [
+      "tricycles",
+      "scooters",
+      "pedal cars",
+      "dolls",
+      "puzzles",
+      "scale models",
+      "reduced-size models",
+      "statuettes",
+      "ornamental articles"
+    ],
+    chapters: ["95"],
+    prefixBoosts: ["9503"]
+  },
   { terms: ["拼图"], queries: ["puzzles"], chapters: ["95"], prefixBoosts: ["9503"] },
   { terms: ["球", "篮球", "足球"], queries: ["balls", "sports balls"], chapters: ["95"], prefixBoosts: ["9506"] },
   { terms: ["健身器材", "运动器材"], queries: ["articles and equipment for general physical exercise", "gymnastics athletics other sports", "sports equipment", "exercise equipment"], chapters: ["95"], prefixBoosts: ["9506"] },

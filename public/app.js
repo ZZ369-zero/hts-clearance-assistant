@@ -1,4 +1,8 @@
-import { chineseSearchCatalog, isMaterialCatalogEntry } from "./search-catalog.js";
+import {
+  buildChineseSearchPlan,
+  normalizeSearchText,
+  splitSearchTerms
+} from "./chinese-search-helper.js?v=20260729-full-category-search-3";
 import {
   buildManualAssessmentState,
   calculateManualAssessments,
@@ -13,9 +17,10 @@ import {
 } from "./certification-rule-engine.js?v=20260728-fda-flags";
 import {
   buildClassificationCandidates,
+  expandHtsPrefixRows,
   getPreferredDescriptionZh,
   isUsableChineseDescription
-} from "./description-helper.js?v=20260729-description-levels";
+} from "./description-helper.js?v=20260729-full-description-3";
 import {
   matchForcedLaborExemptions
 } from "./forced-labor-exemption-engine.js?v=20260729-exemptions";
@@ -96,23 +101,12 @@ const els = {
   releaseBadge: document.querySelector("#releaseBadge"),
   syncTime: document.querySelector("#syncTime"),
   refreshData: document.querySelector("#refreshData"),
+  themeSwitcher: document.querySelector("#themeSwitcher"),
   syncCenter: document.querySelector("#syncCenter"),
   syncAutoStatus: document.querySelector("#syncAutoStatus"),
   syncToggle: document.querySelector("#syncToggle"),
   syncRefreshAll: document.querySelector("#syncRefreshAll"),
   syncSourceList: document.querySelector("#syncSourceList"),
-  oceanTab: document.querySelector("#oceanTab"),
-  airTab: document.querySelector("#airTab"),
-  t01Mode: document.querySelector("#t01Mode"),
-  t11Mode: document.querySelector("#t11Mode"),
-  transportTitle: document.querySelector("#transportTitle"),
-  transportHint: document.querySelector("#transportHint"),
-  clearanceTitle: document.querySelector("#clearanceTitle"),
-  clearanceHint: document.querySelector("#clearanceHint"),
-  oceanFields: document.querySelector("#oceanFields"),
-  airFields: document.querySelector("#airFields"),
-  modeChecklist: document.querySelector("#modeChecklist"),
-  modeValueNotice: document.querySelector("#modeValueNotice"),
   clearanceFee: document.querySelector("#clearanceFee"),
   searchTab: document.querySelector("#searchTab"),
   chapterTab: document.querySelector("#chapterTab"),
@@ -132,6 +126,8 @@ const els = {
   selectedDescription: document.querySelector("#selectedDescription"),
   classificationPath: document.querySelector("#classificationPath"),
   classificationPathList: document.querySelector("#classificationPathList"),
+  classificationEnglishList: document.querySelector("#classificationEnglishList"),
+  classificationDescriptionStatus: document.querySelector("#classificationDescriptionStatus"),
   miniHsCode: document.querySelector("#miniHsCode"),
   miniProductDescription: document.querySelector("#miniProductDescription"),
   effectiveRate: document.querySelector("#effectiveRate"),
@@ -207,34 +203,6 @@ const adCvdHtsAliasRules = [
 
 const searchHistoryStorageKey = "hts-clearance-search-history";
 const searchHistoryLimit = 8;
-
-const transportConfig = {
-  ocean: {
-    title: "海运 Ocean",
-    hint: "整柜、拼箱和大货运输；通常关注 ISF、AMS、提单、到港和 HMF。",
-    checklist: ["确认船司提单 / 货代提单", "确认 ISF 与 AMS 状态", "核对美国到港口岸与柜量", "海运默认纳入 HMF 估算"]
-  },
-  air: {
-    title: "空运 Air",
-    hint: "快件、空派和高时效货物；通常关注 MAWB/HAWB、航班、机场和票数。",
-    checklist: ["确认主单 / 分单号", "核对航班与到达机场", "按票数或包裹数整理发票", "空运默认不纳入 HMF 估算"]
-  }
-};
-
-const clearanceConfig = {
-  t01: {
-    title: "T01 Formal Entry",
-    hint: "适用于正式进口申报、商业大货、高货值或需监管证件的货物。",
-    checklist: ["Importer of Record 与 Bond", "商业发票、装箱单、提单或运单", "HTS、原产国、申报价值", "PGA/特殊监管证件如适用"],
-    notice: "T01 当前按正式申报估算。"
-  },
-  t11: {
-    title: "T11 Informal Entry",
-    hint: "适用于低货值、非正式申报或小包裹场景；超过常见限额时建议转 T01。",
-    checklist: ["按票整理收件人和商品信息", "确认单票申报价值", "核对是否涉及 PGA、配额或反倾销反补贴", "不满足 T11 条件时切换 T01"],
-    notice: "T11 通常用于非正式申报；如单票价值超过 2,500 USD 或涉及监管条件，请按 T01 复核。"
-  }
-};
 
 const dutyRuleCatalog = {
   "9903.88.15": {
@@ -401,15 +369,17 @@ const vehiclePartsSection232Options = [
 ];
 
 const vehiclePartsSection232CodeSet = new Set(vehiclePartsSection232Options.map((option) => option.code));
+const themeStorageKey = "hts-clearance-theme-v1";
+const supportedThemes = new Set(["cloud", "lake", "mint"]);
 
 init();
 
 async function init() {
+  initTheme();
   initSyncPanel();
   bindEvents();
   renderSearchHistory();
-  setTransportMode(state.transportMode);
-  setClearanceMode(state.clearanceMode);
+  els.hmfEnabled.checked = true;
   await Promise.all([
     loadStatus(),
     loadChapters(),
@@ -508,10 +478,12 @@ function bindEvents() {
 
   els.searchTab.addEventListener("click", () => setMode("search"));
   els.chapterTab.addEventListener("click", () => setMode("chapter"));
-  els.oceanTab.addEventListener("click", () => setTransportMode("ocean"));
-  els.airTab.addEventListener("click", () => setTransportMode("air"));
-  els.t01Mode.addEventListener("click", () => setClearanceMode("t01"));
-  els.t11Mode.addEventListener("click", () => setClearanceMode("t11"));
+  els.themeSwitcher?.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-theme]");
+    if (button) {
+      setTheme(button.dataset.theme, { persist: true });
+    }
+  });
   els.loadChapter.addEventListener("click", () => loadChapter(els.chapterSelect.value, true));
   els.chapterSelect.addEventListener("change", () => loadChapter(els.chapterSelect.value, true));
   els.chapterFilter.addEventListener("input", filterChapterRows);
@@ -549,59 +521,34 @@ function bindEvents() {
     els.exciseAmount,
     els.pgaFeeAmount,
     els.clearanceFee
-  ].forEach((input) => input.addEventListener("input", calculate));
+  ].filter(Boolean).forEach((input) => input.addEventListener("input", calculate));
 }
 
-function setTransportMode(mode) {
-  state.transportMode = mode;
-  const isOcean = mode === "ocean";
-  els.oceanTab.classList.toggle("active", isOcean);
-  els.airTab.classList.toggle("active", !isOcean);
-  els.oceanTab.setAttribute("aria-selected", String(isOcean));
-  els.airTab.setAttribute("aria-selected", String(!isOcean));
-  els.oceanFields.classList.toggle("hidden", !isOcean);
-  els.airFields.classList.toggle("hidden", isOcean);
-  els.hmfEnabled.checked = isOcean;
-  if (state.selected) {
-    updateFeeRuleMatches(state.selected, { preserveManualValues: true });
+function initTheme() {
+  let storedTheme = "cloud";
+  try {
+    storedTheme = localStorage.getItem(themeStorageKey) || "cloud";
+  } catch {
+    // Keep the default theme when browser storage is unavailable.
   }
-  updateModePanel();
-  calculate();
+  setTheme(supportedThemes.has(storedTheme) ? storedTheme : "cloud");
 }
 
-function setClearanceMode(mode) {
-  state.clearanceMode = mode;
-  const isT01 = mode === "t01";
-  els.t01Mode.classList.toggle("active", isT01);
-  els.t11Mode.classList.toggle("active", !isT01);
-  els.t01Mode.setAttribute("aria-selected", String(isT01));
-  els.t11Mode.setAttribute("aria-selected", String(!isT01));
-  if (state.selected) {
-    updateFeeRuleMatches(state.selected, { preserveManualValues: true });
+function setTheme(theme, { persist = false } = {}) {
+  const nextTheme = supportedThemes.has(theme) ? theme : "cloud";
+  document.documentElement.dataset.theme = nextTheme;
+  els.themeSwitcher?.querySelectorAll("[data-theme]").forEach((button) => {
+    const isActive = button.dataset.theme === nextTheme;
+    button.classList.toggle("is-active", isActive);
+    button.setAttribute("aria-pressed", String(isActive));
+  });
+  if (persist) {
+    try {
+      localStorage.setItem(themeStorageKey, nextTheme);
+    } catch {
+      // Theme persistence is optional when browser storage is unavailable.
+    }
   }
-  updateModePanel();
-  calculate();
-}
-
-function updateModePanel() {
-  const transport = transportConfig[state.transportMode];
-  const clearance = clearanceConfig[state.clearanceMode];
-  const value = readNumber(els.customsValue);
-
-  els.transportTitle.textContent = transport.title;
-  els.transportHint.textContent = transport.hint;
-  els.clearanceTitle.textContent = clearance.title;
-  els.clearanceHint.textContent = clearance.hint;
-
-  const valueWarning =
-    state.clearanceMode === "t11" && value > 2500
-      ? "当前申报价值超过 2,500 USD，请优先按 T01 正式申报复核。"
-      : clearance.notice;
-  els.modeValueNotice.textContent = valueWarning;
-
-  els.modeChecklist.innerHTML = [...transport.checklist, ...clearance.checklist]
-    .map((item) => `<li>${escapeHtml(item)}</li>`)
-    .join("");
 }
 
 function setMode(mode) {
@@ -819,7 +766,13 @@ async function search(query, force = false) {
     state.dataKind = "search";
     saveSearchHistory(query);
     renderSearchHistory();
-    els.resultTitle.textContent = data.translated ? `查询结果：${data.originalQuery} → ${data.query}` : `查询结果：${query}`;
+    const matchSummary = data.matchSummary;
+    const summaryText = matchSummary && (matchSummary.highRelevance || matchSummary.relatedCandidates)
+      ? `（高相关 ${matchSummary.highRelevance}，关联候选 ${matchSummary.relatedCandidates}）`
+      : "";
+    els.resultTitle.textContent = data.translated
+      ? `查询结果：${data.originalQuery} → ${data.query}${summaryText}`
+      : `查询结果：${query}${summaryText}`;
     renderSearchGuide(data.hints || []);
     renderRows(state.visibleRows);
     selectFirstSelectable();
@@ -898,23 +851,58 @@ async function enhanceSearchResultTranslations(rows) {
   const descriptions = [...new Set(descriptionRows
     .filter(needsTranslationEnhancement)
     .map((row) => row.description)
-    .filter(Boolean))].slice(0, 40);
+    .filter(Boolean))].slice(0, 24);
 
   if (!descriptions.length) {
     return;
   }
 
-  await mapLimit(descriptions, 1, async (description) => {
+  await mapLimit(descriptions, 3, async (description) => {
     try {
-      const data = await api(`/api/translate-description?text=${encodeURIComponent(description)}`);
-      if (requestId !== state.translationRequestId || !data.translation) {
+      const translation = await requestDescriptionTranslation(description);
+      if (requestId !== state.translationRequestId || !translation) {
         return;
       }
-      applyDescriptionTranslation(description, data.translation);
+      applyDescriptionTranslation(description, translation);
     } catch {
       // Keep existing local translation if automatic translation is unavailable.
     }
   });
+}
+
+async function enhanceSelectedDescription(row) {
+  const selectedKey = rowKey(row);
+  const descriptions = [...new Set([...(row.classificationPath || []), row]
+    .filter(needsTranslationEnhancement)
+    .map((item) => item.description)
+    .filter(Boolean))];
+  if (!descriptions.length) {
+    return;
+  }
+
+  await mapLimit(descriptions, 2, async (description) => {
+    const translation = await requestDescriptionTranslation(description).catch(() => "");
+    if (!translation || !state.selected || rowKey(state.selected) !== selectedKey) {
+      return;
+    }
+    applyDescriptionTranslation(description, translation);
+  });
+}
+
+const pendingDescriptionTranslations = new Map();
+
+async function requestDescriptionTranslation(description) {
+  if (!description) {
+    return "";
+  }
+  if (pendingDescriptionTranslations.has(description)) {
+    return pendingDescriptionTranslations.get(description);
+  }
+  const request = api(`/api/translate-description?text=${encodeURIComponent(description)}`)
+    .then((data) => data.translation || "")
+    .finally(() => pendingDescriptionTranslations.delete(description));
+  pendingDescriptionTranslations.set(description, request);
+  return request;
 }
 
 function needsTranslationEnhancement(row) {
@@ -933,14 +921,8 @@ function applyDescriptionTranslation(description, translation) {
 
   renderRows(state.visibleRows);
   if (state.selected?.description === description) {
-    els.selectedDescription.innerHTML = `
-      <span class="zh-line">${escapeHtml(displayZhDescription(state.selected))}</span>
-      <span class="en-line">${escapeHtml(state.selected.description || "--")}</span>
-    `;
-    els.miniProductDescription.textContent = [
-      displayZhDescription(state.selected),
-      state.selected.description || ""
-    ].filter(Boolean).join("；");
+    els.selectedDescription.innerHTML = `<span class="zh-line">${escapeHtml(displayZhDescription(state.selected))}</span>`;
+    els.miniProductDescription.textContent = displayZhDescription(state.selected);
   }
   renderClassificationPath(state.selected);
 }
@@ -969,6 +951,7 @@ function renderRows(rows) {
           <td class="description-cell indent-${Math.min(row.indent || 0, 5)}">
             <span class="zh-line">${escapeHtml(displayZhDescription(row))}</span>
             <span class="en-line">${escapeHtml(row.description || "--")}</span>
+            ${renderSearchMatchMeta(row.searchMatch)}
           </td>
           <td class="rate-cell">${escapeHtml(formatRateDisplay(row.general))}</td>
           <td class="rate-cell additional-cell">${renderAdditionalCodes(row)}</td>
@@ -1000,7 +983,7 @@ function renderSearchGuide(hints) {
 
   els.searchGuide.classList.remove("hidden");
   els.searchGuide.innerHTML = `
-    <span>分类要素</span>
+    <span>检索提示</span>
     ${items.map((item) => `<b>${escapeHtml(item)}</b>`).join("")}
   `;
 }
@@ -1067,6 +1050,19 @@ function buildAdditionalDutyRules(row, context = {}) {
       possibleExemptions: forcedLaborExemption?.possible || []
     };
   });
+}
+
+function renderSearchMatchMeta(match) {
+  if (!match?.reasons?.length) {
+    return "";
+  }
+  const tierLabel = match.tier === "related" ? "关联候选" : "高相关";
+  return `
+    <div class="search-match-meta" aria-label="检索匹配依据">
+      <span class="match-tier ${match.tier === "related" ? "related" : "direct"}">${tierLabel}</span>
+      ${match.reasons.slice(0, 3).map((reason) => `<span>${escapeHtml(reason)}</span>`).join("")}
+    </div>
+  `;
 }
 
 function getDefaultAdditionalDutyCodes(context = {}) {
@@ -1455,6 +1451,7 @@ function selectRow(index) {
   applyRate(row);
   loadAdditionalDuties(row);
   loadCottonAssessment(row);
+  enhanceSelectedDescription(row);
 }
 
 function renderDetail(row) {
@@ -1490,16 +1487,10 @@ function renderDetail(row) {
   }
 
   els.selectedCode.textContent = row.htsno;
-  els.selectedDescription.innerHTML = `
-    <span class="zh-line">${escapeHtml(displayZhDescription(row))}</span>
-    <span class="en-line">${escapeHtml(row.description || "--")}</span>
-  `;
+  els.selectedDescription.innerHTML = `<span class="zh-line">${escapeHtml(displayZhDescription(row))}</span>`;
   renderClassificationPath(row);
   els.miniHsCode.textContent = normalizeHtsCode(row.htsno);
-  els.miniProductDescription.textContent = [
-    displayZhDescription(row),
-    row.description || ""
-  ].filter(Boolean).join("；");
+  els.miniProductDescription.textContent = displayZhDescription(row);
   els.effectiveRate.textContent = formatMiniRateDisplay(row.general) || "--";
   els.miniGeneralRate.textContent = formatMiniRateDisplay(row.general) || "--";
   els.surchargeRate.textContent = "读取中";
@@ -1532,23 +1523,37 @@ function renderDetail(row) {
 }
 
 function renderClassificationPath(row) {
-  if (!els.classificationPath || !els.classificationPathList) {
+  if (!els.classificationPath || !els.classificationPathList || !els.classificationEnglishList) {
     return;
   }
 
-  const path = row?.classificationPath || [];
-  els.classificationPath.classList.toggle("hidden", path.length === 0);
-  els.classificationPathList.innerHTML = path
-    .map((item) => {
-      const zh = getPreferredDescriptionZh(item);
+  const hierarchy = row ? [...(row.classificationPath || []), row] : [];
+  const missingCount = hierarchy.filter((item) => !getPreferredDescriptionZh(item)).length;
+  els.classificationPath.classList.toggle("hidden", !row);
+  if (els.classificationDescriptionStatus) {
+    els.classificationDescriptionStatus.textContent = missingCount
+      ? `正在补充 ${missingCount} 项中文说明`
+      : `已整理 ${hierarchy.length} 级归类说明`;
+    els.classificationDescriptionStatus.classList.toggle("is-loading", missingCount > 0);
+  }
+  els.classificationPathList.innerHTML = hierarchy
+    .map((item, index) => {
+      const zh = getPreferredDescriptionZh(item) || "中文说明生成中...";
       return `
-        <li>
-          <span>${escapeHtml(item.htsno || "上级分类")}</span>
-          ${zh ? `<strong>${escapeHtml(zh)}</strong>` : ""}
-          <small>${escapeHtml(item.description || "--")}</small>
+        <li class="${index === hierarchy.length - 1 ? "is-leaf" : ""}">
+          <span class="description-level-code">${escapeHtml(item.htsno || `第 ${index + 1} 级`)}</span>
+          <strong>${escapeHtml(zh)}</strong>
         </li>
       `;
     })
+    .join("");
+  els.classificationEnglishList.innerHTML = hierarchy
+    .map((item) => `
+      <li>
+        <span>${escapeHtml(item.htsno || "上级分类")}</span>
+        <small>${escapeHtml(item.description || "--")}</small>
+      </li>
+    `)
     .join("");
 }
 
@@ -2402,7 +2407,6 @@ function calculate() {
     clearanceFee,
     total
   });
-  updateModePanel();
 }
 
 function renderAdditionalDutySplit(details) {
@@ -2572,7 +2576,7 @@ function renderTaxLine(line) {
 }
 
 function readNumber(input) {
-  const number = Number(input.value);
+  const number = Number(input?.value || 0);
   return Number.isFinite(number) ? number : 0;
 }
 
@@ -2714,30 +2718,53 @@ async function staticSearch(query, force = false) {
 
   const digits = normalizeStaticHtsDigits(originalQuery);
   if (digits.length >= 4) {
-    const rows = await staticSearchByHts(digits, force);
+    const expansion = await staticSearchByHts(digits, force);
+    const hints = expansion.expanded
+      ? [
+          `已按 ${digits.length} 位父级编码展开`,
+          `展示 ${expansion.total} 个完整 10 位 HTS CODE`,
+          ...(expansion.truncated ? ["结果较多，当前显示前 300 条"] : [])
+        ]
+      : [];
     return {
       originalQuery,
       query: originalQuery,
       translated: false,
-      count: rows.length,
-      value: rows
+      hints,
+      count: expansion.rows.length,
+      value: expansion.rows
     };
   }
 
   const index = await loadStaticData("hts-search-index.json", force);
-  const plan = buildStaticSearchPlan(originalQuery);
-  const rows = buildStaticSearchCandidates(index.value || [])
-    .map((candidate) => ({ row: candidate.row, score: scoreStaticSearchRow(candidate, plan) }))
+  let plan = buildStaticSearchPlan(originalQuery);
+  if (hasChineseText(originalQuery) && !plan.aliasMatched) {
+    const translatedQuery = await translateSearchQueryInBrowser(originalQuery);
+    if (translatedQuery) {
+      plan = buildStaticSearchPlan(originalQuery, translatedQuery);
+    }
+  }
+  const ranked = buildStaticSearchCandidates(index.value || [])
+    .map((candidate) => {
+      const match = scoreStaticSearchRow(candidate, plan);
+      return {
+        row: match.score > 0 ? { ...candidate.row, searchMatch: match.searchMatch } : candidate.row,
+        score: match.score
+      };
+    })
     .filter((item) => item.row.htsno && item.score > 0)
     .sort((a, b) => b.score - a.score || String(a.row.htsno || "").localeCompare(String(b.row.htsno || "")))
-    .map((item) => item.row)
-    .slice(0, 300);
+    .slice(0, 120);
+  const rows = ranked.map((item) => item.row);
+  const highRelevance = rows.filter((row) => row.searchMatch?.tier !== "related").length;
+  const relatedCandidates = rows.filter((row) => row.searchMatch?.tier === "related").length;
 
   return {
     originalQuery,
     query: plan.displayQuery || originalQuery,
-    translated: plan.aliasMatched,
+    translated: plan.aliasMatched || Boolean(plan.translatedTerms?.length),
     hints: plan.hints || [],
+    matchSummary: { highRelevance, relatedCandidates },
     count: rows.length,
     value: rows
   };
@@ -2747,84 +2774,8 @@ function buildStaticSearchCandidates(rows) {
   return buildClassificationCandidates(rows);
 }
 
-function buildStaticSearchPlan(query) {
-  const normalizedQuery = normalizeSearchText(query);
-  const aliasMatches = chineseSearchCatalog
-    .map((entry) => ({
-      ...entry,
-      matchedTerms: entry.terms.filter((term) => normalizedQuery.includes(normalizeSearchText(term)))
-    }))
-    .filter((entry) => entry.matchedTerms.length)
-    .sort((a, b) => longestTermLength(b.matchedTerms) - longestTermLength(a.matchedTerms));
-  const maxMatchedLength = Math.max(0, ...aliasMatches.flatMap((entry) => entry.matchedTerms).map((term) => [...term].length));
-  const focusedAliasMatches = maxMatchedLength > 1
-    ? aliasMatches.filter((entry) => longestTermLength(entry.matchedTerms) > 1)
-    : aliasMatches;
-  const hasProductMatch = focusedAliasMatches.some((entry) => !isMaterialCatalogEntry(entry));
-  const nonMaterialMatches = hasProductMatch
-    ? focusedAliasMatches.filter((entry) => !isMaterialCatalogEntry(entry))
-    : focusedAliasMatches;
-  const maxPrimaryLength = Math.max(0, ...nonMaterialMatches.map((entry) => longestTermLength(entry.matchedTerms)));
-  const primaryAliasMatches = maxPrimaryLength > 1
-    ? nonMaterialMatches.filter((entry) => longestTermLength(entry.matchedTerms) === maxPrimaryLength)
-    : nonMaterialMatches;
-
-  if (primaryAliasMatches.length) {
-    const terms = [
-      ...new Set(primaryAliasMatches.flatMap((entry) => entry.queries).map((term) => normalizeSearchText(term)).filter(Boolean))
-    ];
-    const chapterBoosts = new Set(primaryAliasMatches.flatMap((entry) => entry.chapters || []));
-    const prefixBoosts = [
-      ...new Set(primaryAliasMatches.flatMap((entry) => entry.prefixBoosts || []).map((prefix) => normalizeStaticHtsDigits(prefix)).filter(Boolean))
-    ];
-    const hints = [
-      ...new Set(primaryAliasMatches.flatMap((entry) => entry.hints || []).map((item) => String(item || "").trim()).filter(Boolean))
-    ];
-    const chineseTerms = [...new Set(primaryAliasMatches.flatMap((entry) => entry.matchedTerms).map(normalizeSearchText).filter(Boolean))];
-    return {
-      aliasMatched: true,
-      terms,
-      chineseTerms,
-      chapterBoosts,
-      prefixBoosts,
-      hints,
-      requireAllTerms: false,
-      minimumMatches: 1,
-      displayQuery: terms.slice(0, 4).join(" / ")
-    };
-  }
-
-  return {
-    aliasMatched: false,
-    terms: splitSearchTerms(normalizedQuery),
-    chineseTerms: hasChineseText(normalizedQuery) ? [normalizedQuery] : [],
-    chapterBoosts: new Set(),
-    prefixBoosts: [],
-    hints: [],
-    requireAllTerms: true,
-    minimumMatches: 1,
-    displayQuery: normalizedQuery
-  };
-}
-
-function splitSearchTerms(value) {
-  return String(value || "")
-    .split(/[\s,，;；/、|]+/)
-    .map((term) => term.trim())
-    .filter(Boolean);
-}
-
-function normalizeSearchText(value) {
-  return String(value || "")
-    .toLowerCase()
-    .replace(/[’`]/g, "'")
-    .replace(/[，。；：、（）【】]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function longestTermLength(terms) {
-  return Math.max(0, ...terms.map((term) => [...String(term || "")].length));
+function buildStaticSearchPlan(query, translatedQuery = "") {
+  return buildChineseSearchPlan(query, { translatedQuery });
 }
 
 function scoreStaticSearchRow(candidate, plan) {
@@ -2834,6 +2785,7 @@ function scoreStaticSearchRow(candidate, plan) {
   const descriptionHaystack = normalizeSearchText(candidate.ownText);
   let score = 0;
   let matches = 0;
+  let directMatches = 0;
 
   for (const term of plan.terms) {
     let termScore = scoreStaticSearchTerm(ownHaystack, term);
@@ -2846,8 +2798,9 @@ function scoreStaticSearchRow(candidate, plan) {
       }
       score += termScore;
       matches += 1;
+      directMatches += 1;
     } else if (plan.requireAllTerms) {
-      return 0;
+      return { score: 0, searchMatch: null };
     }
   }
 
@@ -2859,8 +2812,25 @@ function scoreStaticSearchRow(candidate, plan) {
     }
   }
 
+  const relatedMatches = scoreStaticSearchTerms(candidate, plan.relatedTerms || []);
+  const materialMatches = scoreStaticSearchTerms(candidate, plan.materialTerms || []);
+  if (relatedMatches.count) {
+    score += Math.round(relatedMatches.score * 0.75) + 35;
+    matches += relatedMatches.count;
+  }
+  if (materialMatches.count) {
+    score += Math.round(materialMatches.score * 0.5) + 30;
+    matches += materialMatches.count;
+  }
+
+  if (plan.hasProductMatch && directMatches === 0 && relatedMatches.count === 0) {
+    return { score: 0, searchMatch: null };
+  }
+  if (plan.hasProductMatch && directMatches === 0 && relatedMatches.count > 0 && plan.materialTerms.length && materialMatches.count === 0) {
+    return { score: 0, searchMatch: null };
+  }
   if (!matches || matches < (plan.minimumMatches || 1)) {
-    return 0;
+    return { score: 0, searchMatch: null };
   }
 
   const ownTermMatches = (plan.terms || []).filter((term) => scoreStaticSearchTerm(ownHaystack, term) > 0).length;
@@ -2878,7 +2848,45 @@ function scoreStaticSearchRow(candidate, plan) {
     }
   }
 
-  return score + scoreStaticCodeSpecificity(row, plan) - scoreStaticAccessoryPenalty(row, plan);
+  const finalScore = score + scoreStaticCodeSpecificity(row, plan) - scoreStaticAccessoryPenalty(row, plan);
+  const tier = directMatches > 0 ? "direct" : "related";
+  const reasons = [];
+  if (plan.productLabels?.length) {
+    reasons.push(`品类：${plan.productLabels[0]}`);
+  }
+  if (materialMatches.count && plan.materialLabels?.length) {
+    reasons.push(`材质：${plan.materialLabels[0]}`);
+  }
+  if (tier === "related") {
+    reasons.push("相似用途或归类描述");
+  } else if (plan.translatedTerms?.length && !plan.aliasMatched) {
+    reasons.push("中文品名自动扩展");
+  }
+  return {
+    score: Math.max(0, finalScore),
+    searchMatch: {
+      tier,
+      reasons: reasons.length ? reasons : ["品名描述匹配"]
+    }
+  };
+}
+
+function scoreStaticSearchTerms(candidate, terms) {
+  const ownHaystack = normalizeSearchText(`${candidate.row.htsno || ""} ${candidate.ownText}`);
+  const parentHaystack = normalizeSearchText(candidate.parentText || "");
+  let score = 0;
+  let count = 0;
+  for (const term of terms) {
+    let termScore = scoreStaticSearchTerm(ownHaystack, term);
+    if (termScore <= 0 && !staticHasNegativeContext(parentHaystack, term)) {
+      termScore = Math.floor(scoreStaticSearchTerm(parentHaystack, term) * 0.35);
+    }
+    if (termScore > 0) {
+      score += termScore;
+      count += 1;
+    }
+  }
+  return { score, count };
 }
 
 function scoreStaticAccessoryPenalty(row, plan) {
@@ -2986,32 +2994,7 @@ function escapeRegExpForSearch(value) {
 async function staticSearchByHts(digits, force = false) {
   const chapter = digits.slice(0, 2);
   const data = await loadStaticData(`chapters/${chapter}.json`, force);
-  const rows = buildStaticSearchCandidates(data.value || [])
-    .map((candidate) => candidate.row)
-    .filter((row) => row.htsno);
-  const exact = rows.filter((row) => normalizeStaticHtsDigits(row.htsno) === digits);
-  if (exact.length) {
-    return exact;
-  }
-
-  const parentMatches = rows.filter((row) => {
-    const rowDigits = normalizeStaticHtsDigits(row.htsno);
-    return rowDigits && digits.startsWith(rowDigits);
-  });
-  if (parentMatches.length) {
-    const bestLength = Math.max(...parentMatches.map((row) => normalizeStaticHtsDigits(row.htsno).length));
-    return parentMatches.filter((row) => normalizeStaticHtsDigits(row.htsno).length === bestLength);
-  }
-
-  const childMatches = rows.filter((row) => {
-    const rowDigits = normalizeStaticHtsDigits(row.htsno);
-    return rowDigits && rowDigits.startsWith(digits);
-  });
-  if (childMatches.length) {
-    const bestLength = Math.min(...childMatches.map((row) => normalizeStaticHtsDigits(row.htsno).length));
-    return childMatches.filter((row) => normalizeStaticHtsDigits(row.htsno).length === bestLength).slice(0, 50);
-  }
-  return [];
+  return expandHtsPrefixRows(data.value || [], digits, { limit: 300 });
 }
 
 async function staticSection232(hts, generalRateText = "") {
@@ -3379,24 +3362,54 @@ async function translateDescriptionInBrowser(text) {
   if (!text) {
     return "";
   }
+  const translation = await translateTextWithMyMemory(text, "en|zh-CN");
+  if (!isUsableChineseDescription(translation)) {
+    return "";
+  }
+  setClientTranslation(text, translation);
+  return translation;
+}
+
+const clientSearchTranslationStorageKey = "hts-search-translations-v1";
+
+async function translateSearchQueryInBrowser(text) {
+  const normalized = String(text || "").trim();
+  if (!normalized || !hasChineseText(normalized)) {
+    return "";
+  }
   try {
-    const params = new URLSearchParams({
-      q: text,
-      langpair: "en|zh-CN"
-    });
+    const cache = JSON.parse(localStorage.getItem(clientSearchTranslationStorageKey) || "{}");
+    const cached = String(cache[normalized] || "").trim();
+    if (cached && !hasChineseText(cached)) {
+      return cached;
+    }
+    const translated = await translateTextWithMyMemory(normalized, "zh-CN|en");
+    if (!translated || hasChineseText(translated) || translated.toLowerCase() === normalized.toLowerCase()) {
+      return "";
+    }
+    cache[normalized] = translated;
+    const entries = Object.entries(cache).slice(-300);
+    localStorage.setItem(clientSearchTranslationStorageKey, JSON.stringify(Object.fromEntries(entries)));
+    return translated;
+  } catch {
+    return "";
+  }
+}
+
+async function translateTextWithMyMemory(text, langpair) {
+  try {
+    const params = new URLSearchParams({ q: text, langpair });
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 6000);
     const response = await fetch(`https://api.mymemory.translated.net/get?${params}`, {
-      headers: { accept: "application/json" }
-    });
+      headers: { accept: "application/json" },
+      signal: controller.signal
+    }).finally(() => clearTimeout(timeout));
     if (!response.ok) {
       return "";
     }
     const data = await response.json();
-    const translation = decodeHtmlText(data.responseData?.translatedText || "").trim();
-    if (!isUsableChineseDescription(translation)) {
-      return "";
-    }
-    setClientTranslation(text, translation);
-    return translation;
+    return decodeHtmlText(data.responseData?.translatedText || "").trim();
   } catch {
     return "";
   }

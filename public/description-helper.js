@@ -6,6 +6,10 @@ const htsDescriptionOverrides = new Map([
   [
     "8524911000",
     "平板显示模组，但第8528.59、8528.69、8528.72及8528.73子目所列平板显示模组除外。"
+  ],
+  [
+    "1704905200",
+    "根据《美国协调关税税则》总注释15的描述并按其规定申报的糖食。"
   ]
 ]);
 
@@ -17,6 +21,26 @@ const englishDescriptionOverrides = new Map([
   [
     "flat panel display modules, other than flat panel display modules for articles of subheadings 8528.59, 8528.69, 8528.72 and 8528.73",
     "平板显示模组，但第8528.59、8528.69、8528.72及8528.73子目所列平板显示模组除外。"
+  ],
+  [
+    "sugar confectionery (including white chocolate), not containing cocoa",
+    "糖食（包括白巧克力），不含可可。"
+  ],
+  [
+    "described in general note 15 of the tariff schedule and entered pursuant to its provisions",
+    "根据《美国协调关税税则》总注释15的描述并按其规定申报。"
+  ],
+  [
+    "tricycles, scooters, pedal cars and similar wheeled toys; dollsʼ carriages; dolls, other toys; reduced-scale (“scaleˮ) models and similar recreational models, working or not; puzzles of all kinds; parts and accessories thereof",
+    "三轮车、踏板车、脚踏汽车及类似带轮玩具；玩偶车；玩偶及其他玩具；缩小比例模型及类似娱乐模型（无论是否可工作）；各类拼图；以及上述商品的零件和附件。"
+  ],
+  [
+    "under 3 years of age",
+    "适用于3岁以下儿童。"
+  ],
+  [
+    "3 to 12 years of age",
+    "适用于3至12岁儿童。"
   ]
 ]);
 
@@ -105,6 +129,48 @@ export function buildClassificationCandidates(rows = []) {
       searchText
     };
   });
+}
+
+export function expandHtsPrefixRows(rows = [], value, { limit = 300 } = {}) {
+  const prefix = normalizeDescriptionHts(value);
+  const candidates = buildClassificationCandidates(rows).map((candidate) => candidate.row);
+  const exact = candidates.filter((row) => normalizeDescriptionHts(row.htsno) === prefix);
+  if (prefix.length >= 10) {
+    return {
+      rows: exact.slice(0, limit),
+      total: exact.length,
+      expanded: false,
+      truncated: exact.length > limit
+    };
+  }
+
+  const descendants = candidates.filter((row) => {
+    const digits = normalizeDescriptionHts(row.htsno);
+    return digits.length === 10 && digits.startsWith(prefix);
+  });
+  if (descendants.length) {
+    return {
+      rows: descendants.slice(0, limit),
+      total: descendants.length,
+      expanded: true,
+      truncated: descendants.length > limit
+    };
+  }
+
+  const fallbackChildren = candidates.filter((row) => {
+    const digits = normalizeDescriptionHts(row.htsno);
+    return digits.length > prefix.length && digits.startsWith(prefix);
+  });
+  const deepestLength = Math.max(0, ...fallbackChildren.map((row) => normalizeDescriptionHts(row.htsno).length));
+  const fallback = deepestLength
+    ? fallbackChildren.filter((row) => normalizeDescriptionHts(row.htsno).length === deepestLength)
+    : exact;
+  return {
+    rows: fallback.slice(0, limit),
+    total: fallback.length,
+    expanded: fallbackChildren.length > 0,
+    truncated: fallback.length > limit
+  };
 }
 
 function normalizeEnglishDescription(value) {

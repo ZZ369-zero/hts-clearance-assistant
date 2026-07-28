@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>美国 HTS 清关税金助手</title>
-    <link rel="stylesheet" href="./styles.css" />
+    <link rel="stylesheet" href="./styles.css?v=20260729-search-description-theme-4" />
   </head>
   <body>
     <div class="app-shell">
@@ -16,6 +16,11 @@
         <div class="status-strip" aria-live="polite">
           <span id="releaseBadge" class="badge">连接官方数据</span>
           <span id="syncTime">--</span>
+          <div id="themeSwitcher" class="theme-switcher" role="group" aria-label="主题颜色">
+            <button class="theme-swatch is-active" type="button" data-theme="cloud" title="云白主题" aria-label="切换为云白主题"></button>
+            <button class="theme-swatch lake" type="button" data-theme="lake" title="湖蓝主题" aria-label="切换为湖蓝主题"></button>
+            <button class="theme-swatch mint" type="button" data-theme="mint" title="薄荷主题" aria-label="切换为薄荷主题"></button>
+          </div>
           <button id="refreshData" class="icon-button" type="button" title="刷新官方数据" aria-label="刷新官方数据">
             <span aria-hidden="true">↻</span>
           </button>
@@ -23,113 +28,6 @@
       </header>
 
       <main>
-        <section class="mode-shell tool-panel" aria-label="清关方案">
-          <div class="mode-controls">
-            <div>
-              <p class="eyebrow">TRANSPORT</p>
-              <div class="mode-switch" role="tablist" aria-label="运输方式">
-                <button id="oceanTab" class="mode-button active" type="button" role="tab" aria-selected="true">
-                  海运
-                </button>
-                <button id="airTab" class="mode-button" type="button" role="tab" aria-selected="false">
-                  空运
-                </button>
-              </div>
-            </div>
-            <div>
-              <p class="eyebrow">ENTRY TYPE</p>
-              <div class="mode-switch" role="tablist" aria-label="清关模式">
-                <button id="t01Mode" class="mode-button active" type="button" role="tab" aria-selected="true">
-                  T01
-                </button>
-                <button id="t11Mode" class="mode-button" type="button" role="tab" aria-selected="false">
-                  T11
-                </button>
-              </div>
-            </div>
-          </div>
-
-          <div class="mode-summary">
-            <div>
-              <span>运输方式</span>
-              <strong id="transportTitle">海运 Ocean</strong>
-              <p id="transportHint">整柜、拼箱和大货运输；通常关注 ISF、AMS、提单、到港和 HMF。</p>
-            </div>
-            <div>
-              <span>清关模式</span>
-              <strong id="clearanceTitle">T01 Formal Entry</strong>
-              <p id="clearanceHint">适用于正式进口申报、商业大货、高货值或需监管证件的货物。</p>
-            </div>
-          </div>
-
-          <div class="mode-fields">
-            <div id="oceanFields" class="mode-card">
-              <h3>海运字段</h3>
-              <div class="mode-input-grid">
-                <label>
-                  美国到港口岸
-                  <input id="oceanPort" type="text" placeholder="Los Angeles / Long Beach" />
-                </label>
-                <label>
-                  提单号 / MBL-HBL
-                  <input id="billOfLading" type="text" placeholder="MBL / HBL" />
-                </label>
-                <label>
-                  柜量 / 件数
-                  <input id="containerCount" type="text" placeholder="1 x 40HQ / 12 pallets" />
-                </label>
-                <label>
-                  ISF 状态
-                  <select id="isfStatus">
-                    <option value="pending">待确认</option>
-                    <option value="filed">已申报</option>
-                    <option value="not-needed">无需 ISF</option>
-                  </select>
-                </label>
-              </div>
-            </div>
-
-            <div id="airFields" class="mode-card hidden">
-              <h3>空运字段</h3>
-              <div class="mode-input-grid">
-                <label>
-                  美国到达机场
-                  <input id="arrivalAirport" type="text" placeholder="LAX / JFK / ORD" />
-                </label>
-                <label>
-                  运单号 / MAWB-HAWB
-                  <input id="airWaybill" type="text" placeholder="MAWB / HAWB" />
-                </label>
-                <label>
-                  航班 / ETA
-                  <input id="flightInfo" type="text" placeholder="Flight / ETA" />
-                </label>
-                <label>
-                  包裹 / 票数
-                  <input id="packageCount" type="text" placeholder="Parcels / shipments" />
-                </label>
-              </div>
-            </div>
-
-            <div class="mode-card">
-              <h3>申报参数</h3>
-              <div class="mode-input-grid">
-                <label>
-                  清关服务费 USD
-                  <input id="clearanceFee" type="number" min="0" step="0.01" value="0" />
-                </label>
-                <label>
-                  进口商 / IOR
-                  <input id="iorName" type="text" placeholder="Importer of Record" />
-                </label>
-              </div>
-              <p id="modeValueNotice" class="mode-notice">T01 当前按正式申报估算。</p>
-            </div>
-          </div>
-
-          <ul id="modeChecklist" class="mode-checklist"></ul>
-        </section>
-
         <section id="syncCenter" class="sync-center tool-panel collapsed" aria-label="数据同步中心">
           <div class="sync-heading">
             <div>
@@ -212,10 +110,6 @@
                 <h2 id="selectedCode">未选择</h2>
               </div>
               <div id="selectedDescription" class="description-text">从左侧结果选择一行。</div>
-              <details id="classificationPath" class="classification-path hidden">
-                <summary>查看所属分类层级</summary>
-                <ol id="classificationPathList"></ol>
-              </details>
               <div class="customs-info-card product-info-card">
                 <div class="customs-card-title primary">商品信息</div>
                 <div class="hs-code-row">
@@ -231,6 +125,18 @@
                 </div>
                 <p id="miniProductDescription" class="mini-product-description">从左侧结果选择一行。</p>
               </div>
+              <section id="classificationPath" class="customs-info-card product-description-card hidden" aria-label="商品描述">
+                <div class="customs-card-title description-heading">
+                  <span>商品描述</span>
+                  <small id="classificationDescriptionStatus">等待选择商品</small>
+                </div>
+                <p class="description-intro">根据美国 HTS 上下级分类整理，中文为归类辅助说明。</p>
+                <ol id="classificationPathList" class="product-description-hierarchy"></ol>
+                <details class="official-description-details">
+                  <summary>查看英文官方归类原文</summary>
+                  <ol id="classificationEnglishList"></ol>
+                </details>
+              </section>
               <div class="customs-info-card tax-info-card">
                 <div class="customs-card-title accent">其他信息</div>
                 <div class="customs-tax-row">
@@ -354,7 +260,7 @@
                   <input id="mpfMax" type="number" min="0" step="0.01" value="651.50" />
                 </label>
                 <label class="check-row">
-                  <input id="hmfEnabled" type="checkbox" />
+                  <input id="hmfEnabled" type="checkbox" checked />
                   HMF
                 </label>
                 <label>
@@ -448,6 +354,6 @@
       </main>
     </div>
 
-    <script src="./app.js?v=20260729-exclusions-description" type="module"></script>
+    <script src="./app.js?v=20260729-search-description-theme-4" type="module"></script>
   </body>
 </html>

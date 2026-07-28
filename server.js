@@ -4,7 +4,9 @@ import { networkInterfaces } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { inflateRawSync } from "node:zlib";
-import { chineseSearchCatalog, isMaterialCatalogEntry } from "./public/search-catalog.js";
+import { chineseSearchCatalog } from "./public/search-catalog.js";
+import { buildChineseSearchPlan } from "./public/chinese-search-helper.js";
+import { expandHtsPrefixRows } from "./public/description-helper.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.join(__dirname, "public");
@@ -263,6 +265,17 @@ const exactDescriptionTranslations = new Map([
     "Flat panel display modules, other than flat panel display modules for articles of subheadings 8528.59, 8528.69, 8528.72 and 8528.73",
     "平板显示模组，但第8528.59、8528.69、8528.72及8528.73子目所列平板显示模组除外。"
   ],
+  ["Sugar confectionery (including white chocolate), not containing cocoa:", "糖食（包括白巧克力），不含可可。"],
+  [
+    "Described in general note 15 of the tariff schedule and entered pursuant to its provisions",
+    "根据《美国协调关税税则》总注释15的描述并按其规定申报。"
+  ],
+  [
+    "Tricycles, scooters, pedal cars and similar wheeled toys; dollsʼ carriages; dolls, other toys; reduced-scale (“scaleˮ) models and similar recreational models, working or not; puzzles of all kinds; parts and accessories thereof",
+    "三轮车、踏板车、脚踏汽车及类似带轮玩具；玩偶车；玩偶及其他玩具；缩小比例模型及类似娱乐模型（无论是否可工作）；各类拼图；以及上述商品的零件和附件。"
+  ],
+  ["Under 3 years of age", "适用于3岁以下儿童。"],
+  ["3 to 12 years of age", "适用于3至12岁儿童。"],
   ["Coffee or tea makers", "咖啡机或茶具"],
   ["Automatic drip and pump type", "自动滴滤式及泵压式"],
   ["Percolator", "渗滤式咖啡壶"],
@@ -1526,9 +1539,15 @@ async function handleApi(req, res, url) {
 
     const force = url.searchParams.get("refresh") === "1";
     const searchPlan = buildServerSearchPlan(originalQuery);
-    let rows = hasChineseText(originalQuery)
-      ? await searchStaticIndexRowsByPlan(searchPlan)
-      : await searchHtsRowsByPlan(searchPlan, force);
+    const htsDigits = normalizeHtsDigits(originalQuery);
+    const prefixExpansion = htsDigits.length >= 4
+      ? await searchStaticHtsPrefixRows(htsDigits)
+      : null;
+    let rows = prefixExpansion
+      ? prefixExpansion.rows
+      : hasChineseText(originalQuery)
+        ? await searchStaticIndexRowsByPlan(searchPlan)
+        : await searchHtsRowsByPlan(searchPlan, force);
     if (!rows.length) {
       rows = await findHtsFallbackRows(searchPlan.primaryQuery, force);
     }
@@ -1536,7 +1555,13 @@ async function handleApi(req, res, url) {
       originalQuery,
       query: searchPlan.displayQuery,
       translated: searchPlan.aliasMatched || searchPlan.displayQuery !== originalQuery,
-      hints: searchPlan.hints || [],
+      hints: prefixExpansion?.expanded
+        ? [
+            `已按 ${htsDigits.length} 位父级编码展开`,
+            `展示 ${prefixExpansion.total} 个完整 10 位 HTS CODE`,
+            ...(prefixExpansion.truncated ? ["结果较多，当前显示前 300 条"] : [])
+          ]
+        : searchPlan.hints || [],
       count: rows.length,
       value: rows
     });
@@ -2668,62 +2693,34 @@ function buildServerSearchPlan(query) {
     };
   }
 
-  const catalogMatches = chineseSearchCatalog
-    .map((entry) => ({
-      ...entry,
-      matchedTerms: entry.terms.filter((term) => normalizedQuery.includes(normalizeSearchText(term)))
-    }))
-    .filter((entry) => entry.matchedTerms.length)
-    .sort((a, b) => longestTermLength(b.matchedTerms) - longestTermLength(a.matchedTerms));
-  const maxMatchedLength = Math.max(0, ...catalogMatches.flatMap((entry) => entry.matchedTerms).map((term) => [...term].length));
-  const focusedCatalogMatches = maxMatchedLength > 1
-    ? catalogMatches.filter((entry) => longestTermLength(entry.matchedTerms) > 1)
-    : catalogMatches;
-  const hasProductMatch = focusedCatalogMatches.some((entry) => !isMaterialCatalogEntry(entry));
-  const nonMaterialMatches = hasProductMatch
-    ? focusedCatalogMatches.filter((entry) => !isMaterialCatalogEntry(entry))
-    : focusedCatalogMatches;
-  const maxPrimaryLength = Math.max(0, ...nonMaterialMatches.map((entry) => longestTermLength(entry.matchedTerms)));
-  const primaryCatalogMatches = maxPrimaryLength > 1
-    ? nonMaterialMatches.filter((entry) => longestTermLength(entry.matchedTerms) === maxPrimaryLength)
-    : nonMaterialMatches;
-
+  const catalogPlan = buildChineseSearchPlan(originalQuery);
   const legacyExpanded = expandQuery(originalQuery);
-  const legacyTerms = !primaryCatalogMatches.length && legacyExpanded !== originalQuery ? splitSearchTerms(legacyExpanded) : [];
+  const legacyTerms = !catalogPlan.aliasMatched && legacyExpanded !== originalQuery ? splitSearchTerms(legacyExpanded) : [];
   const terms = [
     ...new Set([
-      ...primaryCatalogMatches.flatMap((entry) => entry.queries).map(normalizeSearchText),
+      ...(catalogPlan.terms || []),
       ...legacyTerms.map(normalizeSearchText)
     ].filter(Boolean))
   ];
   const chineseTerms = [
     ...new Set([
-      ...primaryCatalogMatches.flatMap((entry) => entry.matchedTerms).map(normalizeSearchText),
+      ...(catalogPlan.chineseTerms || []),
       normalizedQuery
     ].filter(Boolean))
   ];
-  const chapterBoosts = new Set(primaryCatalogMatches.flatMap((entry) => entry.chapters || []));
-  const prefixBoosts = [
-    ...new Set(primaryCatalogMatches.flatMap((entry) => entry.prefixBoosts || []).map(normalizeHtsDigits).filter(Boolean))
-  ];
-  const hints = [
-    ...new Set(primaryCatalogMatches.flatMap((entry) => entry.hints || []).map(cleanValue).filter(Boolean))
-  ];
-
   const queries = buildServerSearchQueries(terms, originalQuery);
   return {
     originalQuery,
     primaryQuery: queries[0] || originalQuery,
     queries,
     displayQuery: terms.length ? terms.slice(0, 6).join(" / ") : originalQuery,
-    aliasMatched: primaryCatalogMatches.length > 0 || legacyTerms.length > 0,
-    hints,
+    aliasMatched: catalogPlan.aliasMatched || legacyTerms.length > 0,
+    hints: catalogPlan.hints || [],
     plan: {
-      aliasMatched: primaryCatalogMatches.length > 0 || legacyTerms.length > 0,
+      ...catalogPlan,
+      aliasMatched: catalogPlan.aliasMatched || legacyTerms.length > 0,
       terms,
       chineseTerms,
-      chapterBoosts,
-      prefixBoosts,
       requireAllTerms: false,
       minimumMatches: 1
     }
@@ -2820,6 +2817,7 @@ function scoreServerSearchCandidate(candidate, plan) {
   const descriptionHaystack = normalizeSearchText(candidate.ownText || "");
   let score = 0;
   let matches = 0;
+  let directMatches = 0;
 
   for (const term of plan.terms || []) {
     let termScore = scoreSearchTerm(ownHaystack, term);
@@ -2829,6 +2827,7 @@ function scoreServerSearchCandidate(candidate, plan) {
     if (termScore > 0) {
       score += staticDescriptionStartsWithTermServer(descriptionHaystack, term) ? termScore + 60 : termScore;
       matches += 1;
+      directMatches += 1;
     } else if (plan.requireAllTerms) {
       return 0;
     }
@@ -2842,6 +2841,22 @@ function scoreServerSearchCandidate(candidate, plan) {
     }
   }
 
+  const relatedMatches = scoreServerCandidateTerms(candidate, plan.relatedTerms || []);
+  const materialMatches = scoreServerCandidateTerms(candidate, plan.materialTerms || []);
+  if (relatedMatches.count) {
+    score += Math.round(relatedMatches.score * 0.75) + 35;
+    matches += relatedMatches.count;
+  }
+  if (materialMatches.count) {
+    score += Math.round(materialMatches.score * 0.5) + 30;
+    matches += materialMatches.count;
+  }
+  if (plan.hasProductMatch && directMatches === 0 && relatedMatches.count === 0) {
+    return 0;
+  }
+  if (plan.hasProductMatch && directMatches === 0 && relatedMatches.count > 0 && plan.materialTerms?.length && materialMatches.count === 0) {
+    return 0;
+  }
   if (!matches || matches < (plan.minimumMatches || 1)) {
     return 0;
   }
@@ -2862,6 +2877,30 @@ function scoreServerSearchCandidate(candidate, plan) {
   }
 
   return score + scoreSearchSpecificity(row, plan) - scoreServerAccessoryPenalty(row, plan);
+}
+
+async function searchStaticHtsPrefixRows(digits) {
+  const chapterPath = path.join(publicDir, "data", "chapters", `${digits.slice(0, 2)}.json`);
+  const data = JSON.parse(await readFile(chapterPath, "utf8"));
+  return expandHtsPrefixRows(data.value || [], digits, { limit: 300 });
+}
+
+function scoreServerCandidateTerms(candidate, terms) {
+  const ownHaystack = normalizeSearchText(`${candidate.row.htsno || ""} ${candidate.ownText || ""}`);
+  const parentHaystack = normalizeSearchText(candidate.parentText || "");
+  let score = 0;
+  let count = 0;
+  for (const term of terms) {
+    let termScore = scoreSearchTerm(ownHaystack, term);
+    if (termScore <= 0 && !hasNegativeSearchContext(parentHaystack, term)) {
+      termScore = Math.floor(scoreSearchTerm(parentHaystack, term) * 0.35);
+    }
+    if (termScore > 0) {
+      score += termScore;
+      count += 1;
+    }
+  }
+  return { score, count };
 }
 
 function scoreServerSearchRow(row, plan) {

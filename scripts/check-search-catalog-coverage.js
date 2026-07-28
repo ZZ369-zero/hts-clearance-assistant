@@ -1,4 +1,12 @@
+import { readFileSync } from "node:fs";
 import { chineseSearchCatalog, isMaterialCatalogEntry } from "../public/search-catalog.js";
+import { buildChineseSearchPlan } from "../public/chinese-search-helper.js";
+import {
+  buildClassificationCandidates,
+  expandHtsPrefixRows,
+  getPreferredDescriptionZh,
+  isUsableChineseDescription
+} from "../public/description-helper.js";
 
 const probeTerms = [
   "生物制品",
@@ -76,6 +84,58 @@ if (failures.length) {
   process.exitCode = 1;
 }
 
+const compoundPlan = buildChineseSearchPlan("塑料玩具");
+assert(compoundPlan.productLabels.includes("玩具"), "塑料玩具应保留玩具品类匹配");
+assert(compoundPlan.materialLabels.includes("塑料"), "塑料玩具应保留塑料材质匹配");
+assert(compoundPlan.relatedTerms.includes("statuettes"), "塑料玩具应包含关联商品候选词");
+assert(compoundPlan.prefixBoosts.includes("9503"), "塑料玩具应优先 9503");
+
+const translatedPlan = buildChineseSearchPlan("工业用液体分配装置", {
+  translatedQuery: "industrial liquid dispensing apparatus"
+});
+assert(
+  translatedPlan.translatedTerms.includes("industrial liquid dispensing apparatus"),
+  "未收录中文品名应接受自动英译后的全品类检索词"
+);
+
+const hierarchy = buildClassificationCandidates([
+  {
+    htsno: "1704",
+    indent: 0,
+    description: "Sugar confectionery (including white chocolate), not containing cocoa:",
+    descriptionZh: "糖果 (包括白色巧克力)，not 含有 cocoa："
+  },
+  {
+    htsno: "1704.90",
+    indent: 1,
+    description: "Other:",
+    descriptionZh: "其他："
+  },
+  {
+    htsno: "1704.90.52.00",
+    indent: 3,
+    description: "Described in general note 15 of the tariff schedule and entered pursuant to its provisions",
+    descriptionZh: "总注释所述 15 税则及根据其规定申报"
+  }
+]).at(-1).row;
+assert(hierarchy.classificationPath.length === 2, "1704905200 应生成两级上级商品描述");
+assert(
+  getPreferredDescriptionZh(hierarchy).includes("总注释15"),
+  "1704905200 应使用规范中文末级描述"
+);
+assert(
+  !isUsableChineseDescription("糖果 (包括白色巧克力)，not 含有 cocoa："),
+  "中英夹杂描述不得作为合格中文展示"
+);
+
+const chapter85 = JSON.parse(readFileSync(new URL("../public/data/chapters/85.json", import.meta.url), "utf8"));
+const sixDigitExpansion = expandHtsPrefixRows(chapter85.value || [], "852491");
+const expandedCodes = sixDigitExpansion.rows.map((row) => String(row.htsno || "").replace(/\D/g, ""));
+assert(sixDigitExpansion.expanded, "6 位 HTS CODE 应展开下级统计税号");
+assert(expandedCodes.includes("8524911000"), "852491 应包含完整税号 8524911000");
+assert(expandedCodes.includes("8524919000"), "852491 应包含完整税号 8524919000");
+assert(expandedCodes.every((code) => code.length === 10), "父级编码展开结果必须全部为 10 位 HTS CODE");
+
 function matchCatalogEntries(query) {
   const normalizedQuery = normalizeSearchText(query);
   const matches = chineseSearchCatalog
@@ -111,4 +171,11 @@ function normalizeSearchText(value) {
 
 function longestTermLength(terms) {
   return Math.max(0, ...terms.map((term) => [...String(term || "")].length));
+}
+
+function assert(condition, message) {
+  if (!condition) {
+    console.error(`Search/description sentinel failed: ${message}`);
+    process.exitCode = 1;
+  }
 }
