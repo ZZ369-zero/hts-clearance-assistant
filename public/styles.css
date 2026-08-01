@@ -1182,6 +1182,32 @@ tbody tr.selected td:first-child {
   font-weight: 900;
 }
 
+.surcharge-summary-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: flex-start;
+}
+
+.surcharge-summary-value {
+  display: contents;
+}
+
+.surcharge-summary-value .surcharge-rate {
+  grid-column: 2;
+  justify-items: end;
+  text-align: right;
+}
+
+.surcharge-summary-value small {
+  grid-column: 1 / -1;
+  max-width: none;
+  padding-top: 3px;
+  color: #687886;
+  font-size: 11px;
+  line-height: 1.4;
+  white-space: normal;
+}
+
 .customs-restriction-row {
   display: grid;
   gap: 8px;
@@ -1202,6 +1228,67 @@ tbody tr.selected td:first-child {
   gap: 10px;
   color: var(--ink);
   font-size: 14px;
+  line-height: 1.45;
+}
+
+.restriction-choice-group {
+  display: grid;
+  gap: 7px;
+  margin-top: 2px;
+  border-left: 3px solid #2e7d67;
+  padding: 5px 0 4px 9px;
+  background: #f7fbf9;
+}
+
+.restriction-choice-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-right: 2px;
+}
+
+.restriction-choice-heading > span {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 5px 8px;
+  min-width: 0;
+}
+
+.restriction-choice-heading strong {
+  color: var(--navy);
+  font-size: 14px;
+}
+
+.restriction-choice-heading small {
+  color: #5f6b76;
+  font-size: 12px;
+}
+
+.restriction-choice-options {
+  display: grid;
+  gap: 6px;
+}
+
+.restriction-choice-options .restriction-item {
+  padding-left: 10px;
+}
+
+.restriction-choice-options .restriction-item.applied {
+  border-left: 2px solid #2e7d67;
+}
+
+.restriction-choice-options .restriction-item.not-applied {
+  border-left: 2px solid #d4dce3;
+}
+
+.restriction-choice-summary {
+  margin: 0;
+  padding: 6px 8px;
+  color: #36544a;
+  background: #eaf5f0;
+  font-size: 12px;
   line-height: 1.45;
 }
 

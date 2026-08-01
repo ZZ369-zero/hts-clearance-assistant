@@ -137,6 +137,7 @@ const els = {
   effectiveRate: document.querySelector("#effectiveRate"),
   miniGeneralRate: document.querySelector("#miniGeneralRate"),
   surchargeRate: document.querySelector("#surchargeRate"),
+  surchargeBreakdown: document.querySelector("#surchargeBreakdown"),
   restrictionList: document.querySelector("#restrictionList"),
   detailGeneral: document.querySelector("#detailGeneral"),
   detailSpecial: document.querySelector("#detailSpecial"),
@@ -1422,6 +1423,7 @@ function renderDetail(row) {
     els.effectiveRate.textContent = "--";
     els.miniGeneralRate.textContent = "--";
     els.surchargeRate.textContent = "--";
+    els.surchargeBreakdown.textContent = "构成：未选择；不含普通关税及 MPF/HMF";
     els.restrictionList.textContent = "未选择商品";
     els.detailGeneral.textContent = "--";
     els.detailSpecial.textContent = "--";
@@ -1441,6 +1443,7 @@ function renderDetail(row) {
   els.effectiveRate.textContent = formatMiniRateDisplay(row.general) || "--";
   els.miniGeneralRate.textContent = formatMiniRateDisplay(row.general) || "--";
   els.surchargeRate.textContent = "读取中";
+  els.surchargeBreakdown.textContent = "正在核对 Chapter 99 附加税项";
   els.restrictionList.innerHTML = `<div class="restriction-empty">正在读取附加税项...</div>`;
   els.detailGeneral.textContent = formatRateDisplay(row.general) || "--";
   els.detailSpecial.textContent = formatRateDisplay(row.special) || "--";
@@ -1554,6 +1557,7 @@ async function loadAdditionalDuties(row) {
   els.additionalRate.value = "0";
   els.additionalDutyList.innerHTML = `<div class="empty-mini">正在读取附加税规则...</div>`;
   els.surchargeRate.textContent = "读取中";
+  els.surchargeBreakdown.textContent = "正在核对 Chapter 99 附加税项";
   els.restrictionList.innerHTML = `<div class="restriction-empty">正在读取附加税规则...</div>`;
 
   try {
@@ -1612,6 +1616,7 @@ async function loadAdditionalDuties(row) {
       ? `<div class="additional-duty-item"><strong>官方附加税字段</strong><p>${escapeHtml(row.additionalDuties)}</p></div>`
       : `<div class="empty-mini">未从脚注提取到 Chapter 99 附加税项。</div>`;
     els.surchargeRate.textContent = "--";
+    els.surchargeBreakdown.textContent = "未自动计入附加税；不含普通关税及 MPF/HMF";
     els.restrictionList.innerHTML = adCvdItems.length
       ? adCvdItems.join("")
       : row.additionalDuties
@@ -1635,7 +1640,6 @@ async function loadAdditionalDuties(row) {
     let additionalRate = 0;
     const additionalDutyBreakdown = [];
     const rateSummaries = [];
-    const rateParts = [];
     const additionalDutyItems = [];
     const restrictionItems = [];
 
@@ -1654,23 +1658,37 @@ async function loadAdditionalDuties(row) {
           group: rule.group || rule.shortLabel || "CH99",
           label: rule.label || "Chapter 99",
           shortLabel: rule.shortLabel || rule.group || "CH99",
+          displayLabel: rule.material?.shortLabel
+            ? `${rule.shortLabel || rule.group || "232"}-${rule.material.shortLabel}`
+            : rule.shortLabel || rule.group || "CH99",
           code: item.htsno || rule.code || "",
           rate: parsed.rate
         });
-        rateParts.push(`${formatRateNumber(parsed.rate)}%`);
         rateSummaries.push(`${rule.label} ${rule.code}: +${formatRateNumber(parsed.rate)}%`);
       }
       additionalDutyItems.push(renderAdditionalDutyItem(item, parsed, rule, shouldAutoApply));
-      restrictionItems.push(renderRestrictionItem(item, parsed, rule, shouldAutoApply));
+      restrictionItems.push({
+        rule,
+        applied: shouldAutoApply,
+        html: renderRestrictionItem(item, parsed, rule, shouldAutoApply)
+      });
     }
 
-    restrictionItems.push(...adCvdMatches.map(renderAdCvdRestrictionItem));
+    const renderedRestrictionItems = renderRestrictionGroups(restrictionItems);
+    renderedRestrictionItems.push(...adCvdMatches.map(renderAdCvdRestrictionItem));
 
     els.additionalDutyList.innerHTML = additionalDutyItems.join("");
-    els.surchargeRate.textContent = rateParts.length ? rateParts.join("+") : "--";
-    els.restrictionList.innerHTML = restrictionItems.join("");
+    els.restrictionList.innerHTML = renderedRestrictionItems.join("");
 
     state.additionalDutyBreakdown = mergeAdditionalDutyBreakdown(additionalDutyBreakdown);
+    els.surchargeRate.textContent = state.additionalDutyBreakdown.length
+      ? `${formatRateNumber(additionalRate)}%`
+      : "--";
+    els.surchargeBreakdown.textContent = state.additionalDutyBreakdown.length
+      ? `构成：${state.additionalDutyBreakdown
+          .map((entry) => `${entry.displayLabel || entry.shortLabel} ${formatRateNumber(entry.rate)}%`)
+          .join(" + ")}；不含普通关税及 MPF/HMF`
+      : "未自动计入附加税；不含普通关税及 MPF/HMF";
     els.additionalRate.value = String(roundRate(additionalRate));
     els.calcMessage.textContent = rateSummaries.length
       ? `${state.baseRateMessage} 已带入附加税项 ${rateSummaries.join("，")}；请确认原产国、豁免和适用条件。`
@@ -1682,6 +1700,7 @@ async function loadAdditionalDuties(row) {
     }
     els.additionalDutyList.innerHTML = `<div class="empty-mini">附加税项读取失败：${escapeHtml(error.message)}</div>`;
     els.surchargeRate.textContent = "--";
+    els.surchargeBreakdown.textContent = "附加税项读取失败；不含普通关税及 MPF/HMF";
     els.restrictionList.innerHTML = `<div class="restriction-empty">附加税项读取失败：${escapeHtml(error.message)}</div>`;
     els.calcMessage.textContent = `${state.baseRateMessage} 附加税项读取失败。`;
     state.additionalDutyBreakdown = [];
@@ -1894,7 +1913,14 @@ function renderRestrictionItem(item, parsed, rule, applied) {
     : parsed.auto && parsed.rate > 0
     ? `${formatRateNumber(parsed.rate)}%`
     : "需判断";
-  const status = rule.exempt ? "豁免" : rule.exemptionStatus || (applied ? "需复核" : "需确认");
+  const isChoiceOption = Boolean(rule.choiceGroup);
+  const status = rule.exempt
+    ? "豁免"
+    : isChoiceOption
+    ? applied
+      ? "当前计入"
+      : "备选未计入"
+    : rule.exemptionStatus || (applied ? "需复核" : "需确认");
   const title = `${rule.note || "需按申报条件复核"} ${applied ? "已计入估算。" : "未自动计入估算。"}`;
   const materialBadge = rule.material?.shortLabel
     ? `<em class="material-badge">${escapeHtml(rule.material.shortLabel)}</em>`
@@ -1902,7 +1928,7 @@ function renderRestrictionItem(item, parsed, rule, applied) {
   const exemptionDetails = renderForcedLaborExemptionDetails(rule);
 
   return `
-    <div class="restriction-item ${applied ? "applied" : "not-applied"}">
+    <div class="restriction-item ${applied ? "applied" : "not-applied"}${isChoiceOption ? " choice-option" : ""}">
       <div class="restriction-main">
         <strong>${escapeHtml(rule.label)}:</strong>
         ${materialBadge}
@@ -1914,6 +1940,59 @@ function renderRestrictionItem(item, parsed, rule, applied) {
         <button class="help-dot" type="button" title="${escapeHtml(title)}" aria-label="${escapeHtml(title)}">?</button>
       </div>
       ${exemptionDetails}
+    </div>
+  `;
+}
+
+function renderRestrictionGroups(items) {
+  const emittedGroups = new Set();
+  const rendered = [];
+
+  for (const item of items) {
+    const group = item.rule.choiceGroup || "";
+    if (!group) {
+      rendered.push(item.html);
+      continue;
+    }
+    if (emittedGroups.has(group)) {
+      continue;
+    }
+
+    emittedGroups.add(group);
+    const options = items
+      .filter((candidate) => candidate.rule.choiceGroup === group)
+      .sort((a, b) => (a.rule.choiceRank || 0) - (b.rule.choiceRank || 0));
+    rendered.push(renderRestrictionChoiceGroup(options));
+  }
+
+  return rendered;
+}
+
+function renderRestrictionChoiceGroup(options) {
+  const applied = options.filter((option) => option.applied);
+  const appliedLabels = applied.map((option) => {
+    const code = compactChapter99Code(option.rule.code || "");
+    const rate = option.rule.rate == null ? "" : ` ${formatRateNumber(option.rule.rate)}%`;
+    return `${option.rule.label} ${code}${rate}`.trim();
+  });
+  const summary = appliedLabels.length
+    ? `当前估算仅计入：${appliedLabels.join("、")}；其余候选项未计入。`
+    : "当前未自动计入候选项，请按实际车型确认。";
+  const help = "以下车辆零配件 Section 232 税项互斥，须按实际适用车型选择一项，不会同时重复加征。";
+
+  return `
+    <div class="restriction-choice-group" role="group" aria-label="车辆零配件232税项多选一">
+      <div class="restriction-choice-heading">
+        <span>
+          <strong>多选一</strong>
+          <small>按实际车型选择对应的 232 税项</small>
+        </span>
+        <button class="help-dot" type="button" title="${escapeHtml(help)}" aria-label="${escapeHtml(help)}">?</button>
+      </div>
+      <div class="restriction-choice-options">
+        ${options.map((option) => option.html).join("")}
+      </div>
+      <p class="restriction-choice-summary">${escapeHtml(summary)} 不重复加征。</p>
     </div>
   `;
 }
