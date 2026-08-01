@@ -7,8 +7,14 @@ import {
   isUsableChineseDescription
 } from "../public/description-helper.js";
 import {
+  findTradeMeasureOverlap,
   matchForcedLaborExemptions
 } from "../public/forced-labor-exemption-engine.js";
+import {
+  getSelectedVehicleChapter99Rules,
+  NON_VEHICLE_DUTY_CHOICE,
+  resolveVehiclePartsDutyChoice
+} from "../public/vehicle-duty-choice-engine.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, "..");
@@ -53,6 +59,7 @@ async function main() {
   checkEpaEp5AndDoeFtcPrompts(searchIndex, epaFlags);
   checkSection232Snapshot(section232);
   checkSection232VehiclePartsSnapshot(section232VehicleParts);
+  checkVehicleDutyChoiceOutcomes(forcedLaborExemptions, section232VehicleParts, section232);
   checkCottonSnapshot(cotton);
   checkAdCvdSnapshot(adCvd);
 
@@ -365,6 +372,136 @@ function checkSection232VehiclePartsSnapshot(snapshot) {
     non8708.length >= 100 && Number(snapshot.audit?.missedByLegacy8708RuleCount) === non8708.length,
     `non8708=${non8708.length}; examples=${non8708.slice(0, 5).join(",")}`
   );
+}
+
+function checkVehicleDutyChoiceOutcomes(forcedLaborExemptions, snapshot, section232) {
+  const automobile = snapshot.lists?.find((list) => list.id === "automobile");
+  const mhdv = snapshot.lists?.find((list) => list.id === "mhdv");
+  const automobileCodes = new Set((automobile?.codes || []).map((entry) => cleanHts(entry.hts)));
+  const mhdvCodes = new Set((mhdv?.codes || []).map((entry) => cleanHts(entry.hts)));
+  const overlapCodes = [...automobileCodes].filter((code) => mhdvCodes.has(code));
+  const sampleMatches = buildVehicleChoiceMatches("85122020", automobileCodes, mhdvCodes);
+
+  const passengerChoice = resolveVehiclePartsDutyChoice(sampleMatches);
+  const passengerExemption = matchForcedLaborExemptions("8512202080", forcedLaborExemptions, {
+    referenceDate: new Date("2026-08-01T00:00:00Z"),
+    appliedChapter99Rules: getSelectedVehicleChapter99Rules(passengerChoice)
+  });
+  record(
+    "8512202080 defaults to passenger/light vehicle 232 and excludes new forced-labor 301",
+    passengerChoice.selectedChoice === "9903.94.05"
+      && passengerExemption.exact?.code === "9903.05.90"
+      && passengerExemption.exact?.triggerCode === "9903.94.05",
+    `selected=${passengerChoice.selectedChoice}; exclusion=${passengerExemption.exact?.code || "none"}; trigger=${passengerExemption.exact?.triggerCode || "none"}`
+  );
+
+  const mhdvChoice = resolveVehiclePartsDutyChoice(sampleMatches, "9903.74.08");
+  const mhdvExemption = matchForcedLaborExemptions("8512202080", forcedLaborExemptions, {
+    referenceDate: new Date("2026-08-01T00:00:00Z"),
+    appliedChapter99Rules: getSelectedVehicleChapter99Rules(mhdvChoice)
+  });
+  record(
+    "8512202080 MHDV choice excludes new forced-labor 301 without stacking vehicle remedies",
+    getSelectedVehicleChapter99Rules(mhdvChoice).length === 1
+      && mhdvExemption.exact?.code === "9903.05.90"
+      && mhdvExemption.exact?.triggerCode === "9903.74.08",
+    `selected=${mhdvChoice.selectedChoice}; applied=${getSelectedVehicleChapter99Rules(mhdvChoice).map((item) => item.code).join(",") || "none"}`
+  );
+
+  const nonVehicleChoice = resolveVehiclePartsDutyChoice(sampleMatches, NON_VEHICLE_DUTY_CHOICE);
+  const nonVehicleExemption = matchForcedLaborExemptions("8512202080", forcedLaborExemptions, {
+    referenceDate: new Date("2026-08-01T00:00:00Z"),
+    appliedChapter99Rules: getSelectedVehicleChapter99Rules(nonVehicleChoice)
+  });
+  record(
+    "8512202080 non-vehicle choice keeps vehicle 232 out and does not use 9903.05.90",
+    getSelectedVehicleChapter99Rules(nonVehicleChoice).length === 0
+      && nonVehicleExemption.exact?.code !== "9903.05.90",
+    `selected=${nonVehicleChoice.selectedChoice}; exclusion=${nonVehicleExemption.exact?.code || "none"}`
+  );
+
+  const overlapFailures = overlapCodes.filter((code) => {
+    const resolution = resolveVehiclePartsDutyChoice(buildVehicleChoiceMatches(code, automobileCodes, mhdvCodes));
+    const exemption = matchForcedLaborExemptions(code, forcedLaborExemptions, {
+      referenceDate: new Date("2026-08-01T00:00:00Z"),
+      appliedChapter99Rules: getSelectedVehicleChapter99Rules(resolution)
+    });
+    return resolution.optionCount !== 3 || exemption.exact?.code !== "9903.05.90";
+  });
+  record(
+    "all overlapping official vehicle-parts HTS candidates receive three-way choice logic",
+    overlapCodes.length >= 80 && overlapFailures.length === 0,
+    `overlap=${overlapCodes.length}; failures=${overlapFailures.slice(0, 8).join(",") || "none"}`
+  );
+
+  const nonVehicleMeasures = [
+    { code: "9903.82.04", material: { code: "derivative-steel" } },
+    { code: "9903.76.20" },
+    { code: "9903.79.01" }
+  ];
+  const missingTradeMeasures = nonVehicleMeasures.filter((rule) => !findTradeMeasureOverlap([rule]));
+  record(
+    "9903.05.90 overlap engine covers metals, wood products and semiconductors",
+    missingTradeMeasures.length === 0,
+    `missing=${missingTradeMeasures.map((item) => item.code).join(",") || "none"}`
+  );
+
+  const vehicleUnion = new Set([...automobileCodes, ...mhdvCodes]);
+  const metalOverlapCodes = [...vehicleUnion].filter((vehicleCode) =>
+    (section232.entries || []).some((entry) => {
+      const metalCode = cleanHts(entry.hts);
+      return metalCode && (vehicleCode.startsWith(metalCode) || metalCode.startsWith(vehicleCode));
+    })
+  );
+  const metalNonStackFailures = metalOverlapCodes.filter((code) => {
+    const vehicleMatches = buildVehicleChoiceMatches(code, automobileCodes, mhdvCodes);
+    const metalEntry = (section232.entries || []).find((entry) => {
+      const metalCode = cleanHts(entry.hts);
+      return metalCode && (code.startsWith(metalCode) || metalCode.startsWith(code));
+    });
+    const resolution = resolveVehiclePartsDutyChoice([
+      ...vehicleMatches,
+      {
+        code: metalEntry?.chapter99 || "9903.82.04",
+        autoApply: true,
+        source: "CBP Metals HTS List",
+        material: { code: "steel" }
+      }
+    ]);
+    const selectedRules = resolution.matches.filter((match) => match.autoApply !== false);
+    return selectedRules.some((match) => /9903\.(82|85)\./.test(match.code || ""));
+  });
+  record(
+    "vehicle-parts choices suppress overlapping metals 232 instead of stacking both",
+    metalOverlapCodes.length >= 20 && metalNonStackFailures.length === 0,
+    `overlap=${metalOverlapCodes.length}; failures=${metalNonStackFailures.slice(0, 8).join(",") || "none"}`
+  );
+}
+
+function buildVehicleChoiceMatches(hts, automobileCodes, mhdvCodes) {
+  const digits = cleanHts(hts);
+  const matches = [];
+  if ([...automobileCodes].some((code) => digits.startsWith(code) || code.startsWith(digits))) {
+    matches.push({
+      code: "9903.94.05",
+      rate: 25,
+      autoApply: true,
+      choiceGroup: "vehicle-parts-section232",
+      choiceRank: 1,
+      label: "232-汽车零配件"
+    });
+  }
+  if ([...mhdvCodes].some((code) => digits.startsWith(code) || code.startsWith(digits))) {
+    matches.push({
+      code: "9903.74.08",
+      rate: 25,
+      autoApply: false,
+      choiceGroup: "vehicle-parts-section232",
+      choiceRank: 2,
+      label: "232-重型汽车零配件"
+    });
+  }
+  return matches;
 }
 
 function checkCottonSnapshot(cotton) {

@@ -23,7 +23,13 @@ import {
 } from "./description-helper.js?v=20260729-preserved-path-1";
 import {
   matchForcedLaborExemptions
-} from "./forced-labor-exemption-engine.js?v=20260729-exemptions";
+} from "./forced-labor-exemption-engine.js?v=20260801-trade-overlap-1";
+import {
+  getSelectedVehicleChapter99Rules,
+  NON_VEHICLE_DUTY_CHOICE,
+  resolveVehiclePartsDutyChoice,
+  VEHICLE_REMEDY_CHOICE_GROUP
+} from "./vehicle-duty-choice-engine.js?v=20260801-vehicle-choice-1";
 import { getChapterTitle } from "./chapter-titles.js?v=20260729-bilingual-chapters";
 import { rankHtsSearchCandidates } from "./search-ranking.js?v=20260729-relevance-ranking-1";
 
@@ -98,6 +104,7 @@ const state = {
   section122ExclusionsSource: "内置 Annex II 兜底清单",
   descriptionTranslations: new Map(),
   descriptionTranslationCoverage: null,
+  vehicleDutySelections: new Map(),
   chapters: []
 };
 
@@ -517,6 +524,7 @@ function bindEvents() {
   });
   els.manualAssessmentList.addEventListener("input", handleManualAssessmentInput);
   els.manualAssessmentList.addEventListener("change", handleManualAssessmentInput);
+  els.restrictionList.addEventListener("change", handleVehicleDutyChoiceChange);
 
   [
     els.customsValue,
@@ -969,10 +977,13 @@ function buildAdditionalDutyRules(row, context = {}) {
     const policyInactive = getPolicyInactiveMeta(policyRule, context);
     const forcedLaborExemption = code === "9903.05.31" && !policyInactive
       ? matchForcedLaborExemptions(row.htsno, state.forcedLaborExemptions || {}, {
-          referenceDate: getPolicyReferenceDate(context)
+          referenceDate: getPolicyReferenceDate(context),
+          appliedChapter99Rules: context.appliedChapter99Rules || []
         })
       : null;
     const exactForcedLaborExemption = forcedLaborExemption?.exact || null;
+    const isVehicleRemedyChoice = code === "9903.05.31" && Boolean(context.vehicleDutyChoice);
+    const vehicleChoiceSelected = context.vehicleDutyChoice === NON_VEHICLE_DUTY_CHOICE;
     const temporary122Choice = code === "9903.03.01" && !policyInactive ? getTemporary122Choice(row, context) : null;
     const temporary122Exemption = code === "9903.03.01" && !temporary122Choice && !policyInactive
       ? getTemporary122Exemption(row, context)
@@ -983,7 +994,13 @@ function buildAdditionalDutyRules(row, context = {}) {
       label: catalog.label || "Chapter 99 附加税",
       shortLabel: catalog.shortLabel || "CH99",
       rate: catalog.rate ?? null,
-      autoApply: policyInactive || exactForcedLaborExemption || temporary122Choice || temporary122Exemption ? false : catalog.autoApply !== false,
+      autoApply: policyInactive || exactForcedLaborExemption || temporary122Choice || temporary122Exemption
+        ? false
+        : catalog.autoApply !== false && (!isVehicleRemedyChoice || vehicleChoiceSelected),
+      choiceGroup: isVehicleRemedyChoice ? VEHICLE_REMEDY_CHOICE_GROUP : "",
+      choiceValue: isVehicleRemedyChoice ? NON_VEHICLE_DUTY_CHOICE : "",
+      choiceSelected: isVehicleRemedyChoice ? vehicleChoiceSelected : false,
+      choiceRank: isVehicleRemedyChoice ? 1 : 0,
       summaryZh: policyInactive?.summaryZh || exactForcedLaborExemption?.summaryZh || temporary122Choice?.summaryZh || temporary122Exemption?.summaryZh || catalog.summaryZh,
       exemptionStatus: policyInactive?.exemptionStatus || (exactForcedLaborExemption ? "自动豁免" : "") || temporary122Choice?.exemptionStatus || (temporary122Exemption ? "不计入" : catalog.exemptionStatus || "需确认"),
       note: policyInactive?.note || (exactForcedLaborExemption
@@ -1285,6 +1302,9 @@ function createSection232Rule(match, source = {}) {
     detailLabel: "金属制品"
   };
   const materialLabel = material.detailLabel || material.label || "金属制品";
+  const nonStackedNote = match.nonStackedBy
+    ? `当前已选择车辆零部件税项 ${match.nonStackedBy}；依据车辆232非叠加规则，本项金属232不重复计入。`
+    : "";
   return {
     code: match.code || "232-no-match",
     group: "232",
@@ -1293,10 +1313,12 @@ function createSection232Rule(match, source = {}) {
     rate: match.rate ?? null,
     autoApply: match.autoApply !== false,
     choiceGroup: match.choiceGroup || "",
+    choiceValue: match.choiceValue || match.code || "",
+    choiceSelected: Boolean(match.choiceSelected),
     choiceRank: match.choiceRank || 0,
-    summaryZh: match.summaryZh || `${sourceName} ${matchedHts}，材质归类为${materialLabel}，对应 ${match.code || "未命中"}。`,
-    exemptionStatus: match.autoApply === false ? "需复核" : "官方匹配",
-    note: `${match.note || match.context || "Section 232 metals list"}${alternatives}`,
+    summaryZh: `${match.summaryZh || `${sourceName} ${matchedHts}，材质归类为${materialLabel}，对应 ${match.code || "未命中"}。`}${nonStackedNote ? ` ${nonStackedNote}` : ""}`,
+    exemptionStatus: match.nonStackedBy ? "不重复计入" : match.autoApply === false ? "需复核" : "官方匹配",
+    note: `${match.note || match.context || "Section 232 metals list"}${alternatives}${nonStackedNote ? `；${nonStackedNote}` : ""}`,
     material,
     source: "section232"
   };
@@ -1567,9 +1589,28 @@ async function loadAdditionalDuties(row) {
     if (requestId !== state.additionalDutyRequestId) {
       return;
     }
+    const rowSelectionKey = rowKey(row);
+    const vehicleChoice = resolveVehiclePartsDutyChoice(
+      section232.value || [],
+      state.vehicleDutySelections.get(rowSelectionKey) || ""
+    );
+    if (vehicleChoice.hasVehicleChoices) {
+      state.vehicleDutySelections.set(rowSelectionKey, vehicleChoice.selectedChoice);
+    }
+    const appliedChapter99Rules = [
+      ...getSelectedVehicleChapter99Rules(vehicleChoice),
+      ...(vehicleChoice.matches || []).filter((match) =>
+        !match.choiceGroup && match.autoApply !== false && isSection232Code(match.code)
+      )
+    ];
+    const policyContext = {
+      section232Matches: vehicleChoice.matches || [],
+      vehicleDutyChoice: vehicleChoice.selectedChoice,
+      appliedChapter99Rules
+    };
     rules = mergeAdditionalDutyRules([
-      ...buildAdditionalDutyRules(row, { section232Matches: section232.value || [] }),
-      ...buildSection232Rules(row, section232)
+      ...buildAdditionalDutyRules(row, policyContext),
+      ...buildSection232Rules(row, { ...section232, value: vehicleChoice.matches || [] })
     ]);
   } catch (error) {
     if (requestId !== state.additionalDutyRequestId) {
@@ -1906,7 +1947,7 @@ function renderRestrictionItem(item, parsed, rule, applied) {
   const code = isSection232Miss ? "未命中" : compactChapter99Code(displayCode);
   const rateLabel = rule.exempt
     ? parsed.auto && parsed.rate > 0
-      ? `${formatRateNumber(parsed.rate)}%`
+      ? `${formatRateNumber(parsed.rate)}% 不计入`
       : "豁免"
     : isSection232Miss
     ? "不适用"
@@ -1914,21 +1955,30 @@ function renderRestrictionItem(item, parsed, rule, applied) {
     ? `${formatRateNumber(parsed.rate)}%`
     : "需判断";
   const isChoiceOption = Boolean(rule.choiceGroup);
+  const choiceSelected = isChoiceOption ? Boolean(rule.choiceSelected) : false;
   const status = rule.exempt
-    ? "豁免"
+    ? choiceSelected
+      ? "已选择·另有排除"
+      : "条件排除"
     : isChoiceOption
-    ? applied
+    ? choiceSelected && applied
       ? "当前计入"
-      : "备选未计入"
+      : choiceSelected
+        ? "已选择·未计入"
+        : "备选未计入"
     : rule.exemptionStatus || (applied ? "需复核" : "需确认");
   const title = `${rule.note || "需按申报条件复核"} ${applied ? "已计入估算。" : "未自动计入估算。"}`;
   const materialBadge = rule.material?.shortLabel
     ? `<em class="material-badge">${escapeHtml(rule.material.shortLabel)}</em>`
     : "";
   const exemptionDetails = renderForcedLaborExemptionDetails(rule);
+  const choiceControl = isChoiceOption
+    ? `<input class="restriction-choice-radio" type="radio" name="vehicle-remedy-choice" value="${escapeHtml(rule.choiceValue || rule.code || "")}" data-vehicle-duty-choice ${choiceSelected ? "checked" : ""} aria-label="选择${escapeHtml(rule.label || "该税项")}">`
+    : "";
 
   return `
     <div class="restriction-item ${applied ? "applied" : "not-applied"}${isChoiceOption ? " choice-option" : ""}">
+      ${choiceControl}
       <div class="restriction-main">
         <strong>${escapeHtml(rule.label)}:</strong>
         ${materialBadge}
@@ -1969,23 +2019,28 @@ function renderRestrictionGroups(items) {
 }
 
 function renderRestrictionChoiceGroup(options) {
-  const applied = options.filter((option) => option.applied);
-  const appliedLabels = applied.map((option) => {
-    const code = compactChapter99Code(option.rule.code || "");
-    const rate = option.rule.rate == null ? "" : ` ${formatRateNumber(option.rule.rate)}%`;
-    return `${option.rule.label} ${code}${rate}`.trim();
-  });
-  const summary = appliedLabels.length
-    ? `当前估算仅计入：${appliedLabels.join("、")}；其余候选项未计入。`
-    : "当前未自动计入候选项，请按实际车型确认。";
-  const help = "以下车辆零配件 Section 232 税项互斥，须按实际适用车型选择一项，不会同时重复加征。";
+  const selected = options.find((option) => option.rule.choiceSelected);
+  const selectedCode = selected?.rule.code || "";
+  const selectedRate = selected?.rule.rate == null ? "" : `${formatRateNumber(selected.rule.rate)}%`;
+  const selectedLabel = selected
+    ? `${selected.rule.label} ${compactChapter99Code(selectedCode)} ${selectedRate}`.trim()
+    : "尚未选择";
+  const summary = selected?.rule.choiceValue === NON_VEHICLE_DUTY_CHOICE
+    ? selected.applied
+      ? `当前按非车辆零部件用途计入 ${selectedLabel}；车辆232候选项不计入。`
+      : `当前选择非车辆零部件用途，但 ${selectedLabel} 另有排除规则，暂不计入。`
+    : selected
+      ? `当前按实际车型计入 ${selectedLabel}；新301强迫劳动税由 9903.05.90 排除。`
+      : "当前未自动计入候选项，请按商品实际用途选择。";
+  const choiceLabel = formatChoiceCount(options.length);
+  const help = "新301强迫劳动税与下列车辆零部件 Section 232 税项按商品实际用途择一；选择车辆232时，9903.05.90 会排除新301税项。";
 
   return `
-    <div class="restriction-choice-group" role="group" aria-label="车辆零配件232税项多选一">
+    <div class="restriction-choice-group" role="radiogroup" aria-label="新301与车辆零配件232税项择一">
       <div class="restriction-choice-heading">
         <span>
-          <strong>多选一</strong>
-          <small>按实际车型选择对应的 232 税项</small>
+          <strong>${escapeHtml(choiceLabel)}</strong>
+          <small>按商品实际用途选择一项，税金会同步重算</small>
         </span>
         <button class="help-dot" type="button" title="${escapeHtml(help)}" aria-label="${escapeHtml(help)}">?</button>
       </div>
@@ -1995,6 +2050,19 @@ function renderRestrictionChoiceGroup(options) {
       <p class="restriction-choice-summary">${escapeHtml(summary)} 不重复加征。</p>
     </div>
   `;
+}
+
+function formatChoiceCount(count) {
+  return ({ 2: "二选一", 3: "三选一", 4: "四选一" })[count] || `${count}选一`;
+}
+
+function handleVehicleDutyChoiceChange(event) {
+  const input = event.target.closest("[data-vehicle-duty-choice]");
+  if (!input || !state.selected) {
+    return;
+  }
+  state.vehicleDutySelections.set(rowKey(state.selected), input.value);
+  loadAdditionalDuties(state.selected);
 }
 
 function renderForcedLaborExemptionDetails(rule) {

@@ -1272,15 +1272,34 @@ tbody tr.selected td:first-child {
 }
 
 .restriction-choice-options .restriction-item {
-  padding-left: 10px;
+  padding: 7px 8px;
 }
 
 .restriction-choice-options .restriction-item.applied {
   border-left: 2px solid #2e7d67;
+  background: #edf7f3;
 }
 
 .restriction-choice-options .restriction-item.not-applied {
   border-left: 2px solid #d4dce3;
+}
+
+.restriction-item.choice-option {
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  border-radius: 4px;
+}
+
+.restriction-choice-radio {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: #16725e;
+  cursor: pointer;
+}
+
+.restriction-item.choice-option:has(.restriction-choice-radio:focus-visible) {
+  outline: 2px solid #77a9cf;
+  outline-offset: 2px;
 }
 
 .restriction-choice-summary {
@@ -2255,6 +2274,19 @@ dd {
   .tax-line-item,
   .tax-total-line {
     grid-template-columns: 1fr;
+  }
+
+  .restriction-item.choice-option {
+    grid-template-columns: 18px minmax(0, 1fr);
+  }
+
+  .restriction-item.choice-option .restriction-status {
+    grid-column: 2;
+    justify-content: flex-start;
+  }
+
+  .restriction-item.choice-option .forced-labor-exemption-detail {
+    grid-column: 2;
   }
 
   .calc-transport-set {
