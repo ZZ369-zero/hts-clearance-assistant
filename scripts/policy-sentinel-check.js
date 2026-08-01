@@ -22,7 +22,7 @@ main().catch((error) => {
 });
 
 async function main() {
-  const [manifest, searchIndex, chapter99, policyRules, forcedLabor301, forcedLaborExemptions, section122, section232, cotton, adCvd, epaFlags, fdaFlags] = await Promise.all([
+  const [manifest, searchIndex, chapter99, policyRules, forcedLabor301, forcedLaborExemptions, section122, section232, section232VehicleParts, cotton, adCvd, epaFlags, fdaFlags] = await Promise.all([
     readJson(path.join(dataDir, "manifest.json")),
     readJson(path.join(dataDir, "hts-search-index.json")),
     readJson(path.join(dataDir, "chapter99.json")),
@@ -31,6 +31,7 @@ async function main() {
     readJson(path.join(dataDir, "forced-labor-exemptions.json")),
     readJson(path.join(dataDir, "section122-exclusions.json")),
     readJson(path.join(dataDir, "section232.json")),
+    readJson(path.join(dataDir, "section232-vehicle-parts.json")),
     readJson(path.join(dataDir, "cotton.json")),
     readJson(path.join(dataDir, "adcvd.json")),
     readJson(path.join(dataDir, "epa-flags.json")),
@@ -51,6 +52,7 @@ async function main() {
   checkFdaFd1PrinterPrompt(searchIndex, fdaFlags);
   checkEpaEp5AndDoeFtcPrompts(searchIndex, epaFlags);
   checkSection232Snapshot(section232);
+  checkSection232VehiclePartsSnapshot(section232VehicleParts);
   checkCottonSnapshot(cotton);
   checkAdCvdSnapshot(adCvd);
 
@@ -341,6 +343,27 @@ function checkSection232Snapshot(section232) {
     "section232 snapshot is non-empty and includes vehicle/derivative coverage",
     entries.length >= 1000 && hasVehicleOrDerivative,
     `count=${entries.length}; source=${section232.sourceUrl || section232.source?.url || "unknown"}`
+  );
+}
+
+function checkSection232VehiclePartsSnapshot(snapshot) {
+  const automobile = snapshot.lists?.find((list) => list.id === "automobile");
+  const mhdv = snapshot.lists?.find((list) => list.id === "mhdv");
+  const automobileCodes = new Set((automobile?.codes || []).map((entry) => cleanHts(entry.hts)));
+  const mhdvCodes = new Set((mhdv?.codes || []).map((entry) => cleanHts(entry.hts)));
+  const target = "85122020";
+  const allCodes = [...new Set([...automobileCodes, ...mhdvCodes])];
+  const non8708 = allCodes.filter((code) => !code.startsWith("8708"));
+
+  record(
+    "section232 vehicle-parts lists include 8512.20.20 in both vehicle categories",
+    automobileCodes.has(target) && mhdvCodes.has(target),
+    `automobile=${automobileCodes.size}; mhdv=${mhdvCodes.size}; overlap=${snapshot.audit?.overlapCount || 0}`
+  );
+  record(
+    "section232 vehicle-parts audit covers non-8708 official codes",
+    non8708.length >= 100 && Number(snapshot.audit?.missedByLegacy8708RuleCount) === non8708.length,
+    `non8708=${non8708.length}; examples=${non8708.slice(0, 5).join(",")}`
   );
 }
 

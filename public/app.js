@@ -347,6 +347,7 @@ const fallbackPolicyRules = {
 
 const vehiclePartsSection232Options = [
   {
+    listId: "automobile",
     code: "9903.94.05",
     rate: 25,
     autoApply: true,
@@ -359,6 +360,7 @@ const vehiclePartsSection232Options = [
     context: "Automobile parts, as provided for in U.S. note 33 to Chapter 99."
   },
   {
+    listId: "mhdv",
     code: "9903.74.08",
     rate: 25,
     autoApply: false,
@@ -2939,27 +2941,40 @@ async function staticSearchByHts(digits, force = false) {
 }
 
 async function staticSection232(hts, generalRateText = "") {
-  const mappings = await loadStaticData("section232.json");
-  const matches = findStaticSection232Matches(hts, mappings, generalRateText);
+  const [mappings, vehiclePartsMappings] = await Promise.all([
+    loadStaticData("section232.json"),
+    loadStaticData("section232-vehicle-parts.json").catch(() => ({ lists: [], legacyFallback: true }))
+  ]);
+  const matches = findStaticSection232Matches(hts, mappings, generalRateText, vehiclePartsMappings);
   return {
     hts,
     count: matches.length,
-    source: mappings.source || {
-      name: "CBP Metals HTS List",
-      url: mappings.sourceUrl,
-      discoveryUrl: mappings.discoveryUrl,
-      discoveryStatus: mappings.discoveryStatus,
-      fetchedAt: mappings.fetchedAt,
-      effectiveNote: mappings.effectiveNote
+    source: {
+      ...(mappings.source || {
+        name: "CBP Section 232 HTS Lists",
+        url: mappings.sourceUrl,
+        discoveryUrl: mappings.discoveryUrl,
+        discoveryStatus: mappings.discoveryStatus,
+        fetchedAt: mappings.fetchedAt,
+        effectiveNote: mappings.effectiveNote
+      }),
+      vehiclePartsSources: (vehiclePartsMappings.lists || []).map((list) => ({
+        id: list.id,
+        name: list.name,
+        url: list.url,
+        bulletinUrl: list.bulletinUrl,
+        fetchedAt: vehiclePartsMappings.generatedAt,
+        count: list.count || list.codes?.length || 0
+      }))
     },
     value: matches
   };
 }
 
-function findStaticSection232Matches(hts, mappings, generalRateText = "") {
+function findStaticSection232Matches(hts, mappings, generalRateText = "", vehiclePartsMappings = {}) {
   const normalized = normalizeStaticHtsDigits(hts);
   const entries = mappings.entries || [];
-  const vehicleMatches = buildVehiclePartsSection232Matches(hts, normalized);
+  const vehicleMatches = buildVehiclePartsSection232Matches(hts, normalized, vehiclePartsMappings);
   const directMatches = entries.filter((entry) =>
     normalized.startsWith(entry.hts) || entry.hts.startsWith(normalized)
   );
@@ -3008,33 +3023,54 @@ function findStaticSection232Matches(hts, mappings, generalRateText = "") {
   }];
 }
 
-function buildVehiclePartsSection232Matches(hts, normalized = normalizeStaticHtsDigits(hts)) {
-  if (!/^8708/.test(normalized || "")) {
-    return [];
-  }
+function buildVehiclePartsSection232Matches(hts, normalized = normalizeStaticHtsDigits(hts), mappings = {}) {
+  const lists = mappings.lists || [];
+  const matchedLists = new Map(lists
+    .filter((list) => (list.codes || []).some((entry) => {
+      const code = normalizeStaticHtsDigits(entry.hts || entry.displayHts || entry);
+      return code && (normalized.startsWith(code) || code.startsWith(normalized));
+    }))
+    .map((list) => [list.id, list]));
+  const options = lists.length
+    ? vehiclePartsSection232Options.filter((option) => matchedLists.has(option.listId))
+    : /^8708/.test(normalized || "") ? vehiclePartsSection232Options : [];
 
-  return vehiclePartsSection232Options.map((option) => ({
-    code: option.code,
-    htsMatch: hts,
-    normalizedMatch: normalized,
-    context: option.context,
-    material: {
-      code: option.materialCode,
-      label: option.materialLabel,
-      shortLabel: option.shortLabel,
-      detailLabel: option.materialLabel
-    },
-    label: option.label,
-    confidence: normalized.length >= 6 ? "prefix" : "heading",
-    rate: option.rate,
-    autoApply: option.autoApply !== false,
-    choiceGroup: option.choiceGroup,
-    choiceRank: option.choiceRank,
-    alternatives: vehiclePartsSection232Options.length,
-    source: "USITC Chapter 99",
-    summaryZh: `${option.label} ${option.code} 为车辆零配件 232 备选项，税率按 Chapter 99 读取；与 122/其他车辆 232 项多选一。`,
-    note: `${option.context} 与 122 临时关税及其他车辆零配件 232 项多选一；${option.autoApply === false ? "按条件候选列示，不默认计入。" : "默认按车辆零配件 232 项计入估算。"}`
-  }));
+  return options.map((option) => {
+    const list = matchedLists.get(option.listId);
+    const matchingCodes = (list?.codes || [])
+      .filter((entry) => {
+        const code = normalizeStaticHtsDigits(entry.hts || entry.displayHts || entry);
+        return code && (normalized.startsWith(code) || code.startsWith(normalized));
+      })
+      .sort((a, b) => normalizeStaticHtsDigits(b.hts || b).length - normalizeStaticHtsDigits(a.hts || a).length);
+    const matchedCode = matchingCodes[0];
+    const displayMatch = matchedCode?.displayHts || matchedCode?.hts || hts;
+    const normalizedMatch = normalizeStaticHtsDigits(matchedCode?.hts || matchedCode || normalized);
+
+    return {
+      code: option.code,
+      htsMatch: displayMatch,
+      normalizedMatch,
+      context: option.context,
+      material: {
+        code: option.materialCode,
+        label: option.materialLabel,
+        shortLabel: option.shortLabel,
+        detailLabel: option.materialLabel
+      },
+      label: option.label,
+      confidence: normalizedMatch === normalized ? "exact" : normalized.length >= 6 ? "prefix" : "heading",
+      rate: option.rate,
+      autoApply: option.autoApply !== false,
+      choiceGroup: option.choiceGroup,
+      choiceRank: option.choiceRank,
+      alternatives: options.length,
+      source: list?.name || "USITC Chapter 99",
+      sourceUrl: list?.url || "",
+      summaryZh: `${option.label} ${option.code} 命中 CBP 官方车辆零部件清单 ${displayMatch}，税率 +${option.rate}%；须按实际适用车型选择。`,
+      note: `${option.context} 与其他车辆零部件 232 项按实际车型互斥选择；${option.autoApply === false ? "作为中重型车辆条件候选列示，不默认计入。" : "当前默认按乘用车/轻型卡车零部件计入估算；非该类车辆应改选相应零税率或中重型车辆条款。"}`
+    };
+  });
 }
 
 function classifyStaticSection232Material(entry) {

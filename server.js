@@ -21,6 +21,7 @@ const SECTION_232_MONITOR_URLS = [
   "https://www.cbp.gov/trade/programs-administration/trade-remedies",
   "https://content.govdelivery.com/accounts/USDHSCBP/bulletins/41aa83d"
 ];
+const SECTION_232_VEHICLE_PARTS_PATH = path.join(publicDir, "data", "section232-vehicle-parts.json");
 const SECTION_122_ANNEX_II_URL =
   "https://www.whitehouse.gov/wp-content/uploads/2026/02/2026Section122.prc_.ANNEX2_.Final_.pdf";
 const CBP_FORCED_LABOR_301_URL = "https://content.govdelivery.com/accounts/USDHSCBP/bulletins/421d887";
@@ -70,6 +71,7 @@ const adCvdHtsAliasRules = [
 
 const vehiclePartsSection232Options = [
   {
+    listId: "automobile",
     code: "9903.94.05",
     rate: 25,
     autoApply: true,
@@ -82,6 +84,7 @@ const vehiclePartsSection232Options = [
     context: "Automobile parts, as provided for in U.S. note 33 to Chapter 99."
   },
   {
+    listId: "mhdv",
     code: "9903.74.08",
     rate: 25,
     autoApply: false,
@@ -159,12 +162,12 @@ const syncSources = [
   },
   {
     id: "section232",
-    name: "232 钢铁铝铜清单",
-    sourceName: "CBP / GovDelivery Metals HTS List",
+    name: "232 金属与车辆零部件清单",
+    sourceName: "CBP / GovDelivery Section 232 HTS Lists",
     url: SECTION_232_FALLBACK_METALS_LIST_URL,
     monitorUrls: SECTION_232_MONITOR_URLS,
     intervalMs: 6 * 60 * 60 * 1000,
-    description: "自动监控 CBP 公告页，发现最新 Metals HTS List DOCX 后抓取。"
+    description: "每 6 小时抓取 CBP Metals、汽车零部件和中重型车辆零部件官方清单。"
   },
   {
     id: "cotton",
@@ -1584,18 +1587,29 @@ async function handleApi(req, res, url) {
     }
 
     const force = url.searchParams.get("refresh") === "1";
-    const mappings = await loadSection232Mappings(force);
-    const matches = findSection232Matches(hts, mappings, url.searchParams.get("general"));
+    const [mappings, vehiclePartsMappings] = await Promise.all([
+      loadSection232Mappings(force),
+      loadVehiclePartsSection232Mappings(force)
+    ]);
+    const matches = findSection232Matches(hts, mappings, url.searchParams.get("general"), vehiclePartsMappings);
     sendJson(res, 200, {
       hts,
       count: matches.length,
       source: {
-        name: "CBP Metals HTS List",
+        name: "CBP Section 232 HTS Lists",
         url: mappings.sourceUrl || SECTION_232_FALLBACK_METALS_LIST_URL,
         discoveryUrl: mappings.discoveryUrl,
         discoveryStatus: mappings.discoveryStatus,
         fetchedAt: mappings.fetchedAt,
-        effectiveNote: mappings.effectiveNote
+        effectiveNote: mappings.effectiveNote,
+        vehiclePartsSources: (vehiclePartsMappings.lists || []).map((list) => ({
+          id: list.id,
+          name: list.name,
+          url: list.url,
+          bulletinUrl: list.bulletinUrl,
+          fetchedAt: vehiclePartsMappings.generatedAt,
+          count: list.count || list.codes?.length || 0
+        }))
       },
       value: matches
     });
@@ -1770,6 +1784,23 @@ async function loadSection232Mappings(force = false) {
   mappings.discoveryStatus = source.status;
   cache.set(key, { time: now, data: mappings });
   return mappings;
+}
+
+async function loadVehiclePartsSection232Mappings(force = false) {
+  const now = Date.now();
+  const key = "section232:vehicle-parts-lists";
+  const cached = cache.get(key);
+  if (!force && cached && now - cached.time < ttl.section232) {
+    return cached.data;
+  }
+
+  try {
+    const data = JSON.parse(await readFile(SECTION_232_VEHICLE_PARTS_PATH, "utf8"));
+    cache.set(key, { time: now, data });
+    return data;
+  } catch {
+    return { generatedAt: "", lists: [], legacyFallback: true };
+  }
 }
 
 async function discoverSection232Document(force = false) {
@@ -2382,13 +2413,13 @@ function extractChapterOneToNinetySevenCodes(text) {
   return looksLikeCodeList ? [...new Set(candidates)] : [];
 }
 
-function findSection232Matches(hts, mappings, generalRateText = "") {
+function findSection232Matches(hts, mappings, generalRateText = "", vehiclePartsMappings = {}) {
   const normalized = normalizeHtsDigits(hts);
   if (!normalized) {
     return [];
   }
 
-  const vehicleMatches = buildVehiclePartsSection232Matches(hts, normalized);
+  const vehicleMatches = buildVehiclePartsSection232Matches(hts, normalized, vehiclePartsMappings);
   const directMatches = mappings.entries.filter((entry) =>
     normalized.startsWith(entry.hts) || entry.hts.startsWith(normalized)
   );
@@ -2437,33 +2468,54 @@ function findSection232Matches(hts, mappings, generalRateText = "") {
   }];
 }
 
-function buildVehiclePartsSection232Matches(hts, normalized = normalizeHtsDigits(hts)) {
-  if (!/^8708/.test(normalized || "")) {
-    return [];
-  }
+function buildVehiclePartsSection232Matches(hts, normalized = normalizeHtsDigits(hts), mappings = {}) {
+  const lists = mappings.lists || [];
+  const matchedLists = new Map(lists
+    .filter((list) => (list.codes || []).some((entry) => {
+      const code = normalizeHtsDigits(entry.hts || entry.displayHts || entry);
+      return code && (normalized.startsWith(code) || code.startsWith(normalized));
+    }))
+    .map((list) => [list.id, list]));
+  const options = lists.length
+    ? vehiclePartsSection232Options.filter((option) => matchedLists.has(option.listId))
+    : /^8708/.test(normalized || "") ? vehiclePartsSection232Options : [];
 
-  return vehiclePartsSection232Options.map((option) => ({
-    code: option.code,
-    htsMatch: hts,
-    normalizedMatch: normalized,
-    context: option.context,
-    material: {
-      code: option.materialCode,
-      label: option.materialLabel,
-      shortLabel: option.shortLabel,
-      detailLabel: option.materialLabel
-    },
-    label: option.label,
-    confidence: normalized.length >= 6 ? "prefix" : "heading",
-    rate: option.rate,
-    autoApply: option.autoApply !== false,
-    choiceGroup: option.choiceGroup,
-    choiceRank: option.choiceRank,
-    alternatives: vehiclePartsSection232Options.length,
-    source: "USITC Chapter 99",
-    summaryZh: `${option.label} ${option.code} 为车辆零配件 232 备选项，税率按 Chapter 99 读取；与 122/其他车辆 232 项多选一。`,
-    note: `${option.context} 与 122 临时关税及其他车辆零配件 232 项多选一；${option.autoApply === false ? "按条件候选列示，不默认计入。" : "默认按车辆零配件 232 项计入估算。"}`
-  }));
+  return options.map((option) => {
+    const list = matchedLists.get(option.listId);
+    const matchingCodes = (list?.codes || [])
+      .filter((entry) => {
+        const code = normalizeHtsDigits(entry.hts || entry.displayHts || entry);
+        return code && (normalized.startsWith(code) || code.startsWith(normalized));
+      })
+      .sort((a, b) => normalizeHtsDigits(b.hts || b).length - normalizeHtsDigits(a.hts || a).length);
+    const matchedCode = matchingCodes[0];
+    const displayMatch = matchedCode?.displayHts || matchedCode?.hts || hts;
+    const normalizedMatch = normalizeHtsDigits(matchedCode?.hts || matchedCode || normalized);
+
+    return {
+      code: option.code,
+      htsMatch: displayMatch,
+      normalizedMatch,
+      context: option.context,
+      material: {
+        code: option.materialCode,
+        label: option.materialLabel,
+        shortLabel: option.shortLabel,
+        detailLabel: option.materialLabel
+      },
+      label: option.label,
+      confidence: normalizedMatch === normalized ? "exact" : normalized.length >= 6 ? "prefix" : "heading",
+      rate: option.rate,
+      autoApply: option.autoApply !== false,
+      choiceGroup: option.choiceGroup,
+      choiceRank: option.choiceRank,
+      alternatives: options.length,
+      source: list?.name || "USITC Chapter 99",
+      sourceUrl: list?.url || "",
+      summaryZh: `${option.label} ${option.code} 命中 CBP 官方车辆零部件清单 ${displayMatch}，税率 +${option.rate}%；须按实际适用车型选择。`,
+      note: `${option.context} 与其他车辆零部件 232 项按实际车型互斥选择；${option.autoApply === false ? "作为中重型车辆条件候选列示，不默认计入。" : "当前默认按乘用车/轻型卡车零部件计入估算；非该类车辆应改选相应零税率或中重型车辆条款。"}`
+    };
+  });
 }
 
 function isSection232Chapter99(code) {

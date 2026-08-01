@@ -77,7 +77,7 @@ const sourceLabels = {
   forcedLabor301: ["New 301 forced labor duty", "CBP Section 301 Forced Labor Import Duties", "Compatibility snapshot derived from policy-rules.json for 9903.05.31.", forcedLabor301SourceUrl],
   forcedLaborExemptions: ["新301排除清单", "CBP Forced Labor HTS List", "解析9903.05.85-9903.05.92排除规则，统计有效、到期、精确HTS及条件类项目。", forcedLabor301SourceUrl],
   section122: ["122 Annex II exclusions", "White House Section 122 Annex II", "Section 122 Annex II HTS exclusion prefixes used to avoid applying 9903.03.01 to excluded goods.", "https://www.whitehouse.gov/wp-content/uploads/2026/02/2026Section122.prc_.ANNEX2_.Final_.pdf"],
-  section232: ["232 Metals HTS List", "CBP / GovDelivery Metals HTS List", "CBP Metals HTS List discovery and parsed entries.", "https://www.cbp.gov/trade/programs-administration/trade-remedies"],
+  section232: ["232 金属与车辆零部件清单", "CBP / GovDelivery Section 232 HTS Lists", "CBP 金属、汽车零部件和中重型车辆零部件官方清单。", "https://www.cbp.gov/trade/programs-administration/trade-remedies"],
   cotton: ["Cotton Import Assessment", "eCFR 7 CFR 1205", "Cotton import assessment table.", "https://www.ecfr.gov/current/title-7/subtitle-B/chapter-XI/part-1205/subpart-ECFR80efc31412f8612"],
   adcvdOfficial: ["AD/CVD official ACCESS", "ITA ACCESS AD/CVD", "Official ACCESS status monitor.", "https://access.trade.gov/adcvd"],
   adcvdLocal: ["AD/CVD HTS match dataset", "Local AD/CVD data snapshot", "HTS match snapshot used by the static site.", "https://access.trade.gov/adcvd"],
@@ -213,6 +213,43 @@ async function exportHts(manifest) {
 
 async function exportSection232(manifest) {
   console.log("Exporting Section 232 index...");
+  const vehiclePartsFile = path.join(dataDir, "section232-vehicle-parts.json");
+  const oldVehicleParts = await readJsonSafe(vehiclePartsFile, null);
+  let vehicleParts;
+
+  try {
+    const pythonCommand = process.env.PYTHON || "python";
+    const parserPath = path.join(__dirname, "parse-section232-vehicle-parts.py");
+    const result = await execFileAsync(pythonCommand, [parserPath], {
+      cwd: rootDir,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        PYTHONIOENCODING: "utf-8"
+      },
+      maxBuffer: 16 * 1024 * 1024,
+      timeout: 4 * 60 * 1000
+    });
+    vehicleParts = JSON.parse(result.stdout);
+  } catch (error) {
+    if (!oldVehicleParts?.lists?.length) {
+      throw error;
+    }
+    console.warn(`Section 232 vehicle-parts export failed, keeping previous snapshot: ${error.message}`);
+    vehicleParts = {
+      ...oldVehicleParts,
+      retainedPreviousRows: true,
+      warning: error.message
+    };
+  }
+
+  const automobile = vehicleParts.lists?.find((list) => list.id === "automobile");
+  const mhdv = vehicleParts.lists?.find((list) => list.id === "mhdv");
+  if (!automobile?.codes?.some((entry) => entry.hts === "85122020") || !mhdv?.codes?.some((entry) => entry.hts === "85122020")) {
+    throw new Error("Section 232 vehicle-parts export failed sentinel: 8512.20.20 must be in both official lists.");
+  }
+  await writeJson(vehiclePartsFile, vehicleParts);
+
   const old = await readJsonSafe(path.join(dataDir, "section232.json"), null);
   const data = await fetchJson("/api/static/section-232-index?refresh=1").catch((error) => {
     if (old) {
@@ -222,12 +259,17 @@ async function exportSection232(manifest) {
     throw error;
   });
   await writeJson(path.join(dataDir, "section232.json"), data);
-  manifest.counts = { ...(manifest.counts || {}), section232Rows: data.entries?.length || 0 };
+  const vehiclePartsRows = (vehicleParts.lists || []).reduce((sum, list) => sum + (list.codes?.length || 0), 0);
+  manifest.counts = {
+    ...(manifest.counts || {}),
+    section232Rows: (data.entries?.length || 0) + vehiclePartsRows,
+    section232VehiclePartRows: vehiclePartsRows
+  };
   setSourceState(manifest, "section232", {
-    count: data.entries?.length || 0,
+    count: (data.entries?.length || 0) + vehiclePartsRows,
     url: data.sourceUrl || data.source?.url,
-    effectiveNote: data.effectiveNote,
-    fetchedAt: data.fetchedAt || now
+    effectiveNote: `${data.effectiveNote || "CBP Metals HTS List"}；车辆零部件清单 ${vehiclePartsRows} 条。`,
+    fetchedAt: vehicleParts.generatedAt || data.fetchedAt || now
   });
 }
 
