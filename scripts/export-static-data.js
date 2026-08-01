@@ -680,12 +680,13 @@ function mergeSources(existing, selected, counts) {
     for (const id of config.ids) {
       const labels = sourceLabels[id] || [id, id, ""];
       const current = byId.get(id) || {};
+      const refreshConfiguredLabel = id === "section232";
       byId.set(id, {
         id,
-        name: current.name || labels[0],
-        sourceName: current.sourceName || labels[1],
+        name: refreshConfiguredLabel ? labels[0] : current.name || labels[0],
+        sourceName: refreshConfiguredLabel ? labels[1] : current.sourceName || labels[1],
         url: current.url || labels[3] || "",
-        description: current.description || labels[2],
+        description: refreshConfiguredLabel ? labels[2] : current.description || labels[2],
         intervalMinutes: config.minutes,
         state: {
           ...(current.state || {}),
