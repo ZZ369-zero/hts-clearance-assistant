@@ -1,4 +1,4 @@
-import { certificationCatalog } from "./certification-catalog.js?v=20260729-epa-ep5-2";
+import { certificationCatalog } from "./certification-catalog.js?v=20260803-epa-ep3-1";
 
 const statusMeta = {
   high: {
@@ -58,6 +58,7 @@ function matchEpaFlagRules(htsDigits, snapshot) {
     const meta = snapshot.flags?.[flag] || {};
     const datasetDate = meta.datasetDate || snapshot.generatedAt?.slice(0, 10) || "";
     const listDescription = String(record.description || "").trim();
+    const flagGuidance = getEpaFlagGuidance(flag, snapshot);
 
     return {
       id: `epa-flag-${flag.toLowerCase()}`,
@@ -67,16 +68,16 @@ function matchEpaFlagRules(htsDigits, snapshot) {
       nameEn: meta.nameEn || `${flag} EPA Import Filing May Be Required`,
       category: "pga",
       status: meta.status || "review",
-      suppresses: ["epa-pesticide-noa"],
-      summary: "可能需要 EPA 进口申报",
+      suppresses: flag === "EP5" ? ["epa-pesticide-noa"] : [],
+      summary: flagGuidance.summary,
       explanation: [
         meta.meaningZh || `${flag} 是 EPA/CBP ACE 的精确 HTS 监管标志。`,
-        "EP5 表示农药或农药装置 Notice of Arrival 数据可能需要，不等同于自动判定商品受 FIFRA 监管。",
+        flagGuidance.explanation,
         listDescription ? `清单描述：${listDescription}` : "",
-        "应结合产品名称、用途、作用机理、标签宣称和成分判断；实际属于农药或农药装置时，即使 HTS 未标 EP5 也可能必须申报。"
+        flagGuidance.reviewNote
       ].filter(Boolean).join(" "),
-      sourceName: "EPA Importing and Exporting Pesticides and Devices",
-      sourceUrl: snapshot.source?.officialUrl || "https://www.epa.gov/compliance/importing-and-exporting-pesticides-and-devices",
+      sourceName: flagGuidance.sourceName,
+      sourceUrl: meta.officialUrl || flagGuidance.sourceUrl,
       matchedBy: [
         `${flag} HTS 精确代码 ${formatHtsForDisplay(htsDigits)}`,
         datasetDate ? `清单日期 ${datasetDate}` : ""
@@ -86,6 +87,25 @@ function matchEpaFlagRules(htsDigits, snapshot) {
       matchedKeywords: []
     };
   });
+}
+
+function getEpaFlagGuidance(flag, snapshot) {
+  if (flag === "EP3") {
+    return {
+      summary: "可能需要 EPA 车辆或发动机进口申报",
+      explanation: "EP3 是车辆和发动机申报标志，不是产品认证结论；装有受监管发动机的设备可能涉及 EPA Form 3520-1 或 3520-21/ACE 数据。",
+      reviewNote: "应确认设备是否带汽油、柴油、非道路、固定式或重型发动机，以及发动机型号、功率、排放标签和证书情况；纯电设备或依法排除的发动机可按事实申报或 disclaim。",
+      sourceName: "EPA Importing Vehicles and Engines",
+      sourceUrl: snapshot.source?.officialUrl || "https://www.epa.gov/importing-vehicles-and-engines"
+    };
+  }
+  return {
+    summary: "可能需要 EPA 农药及装置进口申报",
+    explanation: "EP5 表示农药或农药装置 Notice of Arrival 数据可能需要，不等同于自动判定商品受 FIFRA 监管。",
+    reviewNote: "应结合产品名称、用途、作用机理、标签宣称和成分判断；实际属于农药或农药装置时，即使 HTS 未标 EP5 也可能必须申报。",
+    sourceName: "EPA Importing and Exporting Pesticides and Devices",
+    sourceUrl: snapshot.source?.pesticideOfficialUrl || "https://www.epa.gov/compliance/importing-and-exporting-pesticides-and-devices"
+  };
 }
 
 function matchFdaFlagRules(htsDigits, snapshot) {

@@ -32,7 +32,7 @@ on:
     - cron: "17 */6 * * *"
     # AD/CVD official monitor and static match snapshot: every 24 hours.
     - cron: "27 2 * * *"
-    # EPA EP5 and FDA FD1-FD4 HTS flag lists: every 24 hours.
+    # EPA EP3/EP5 and FDA FD1-FD4 HTS flag lists: every 24 hours.
     - cron: "47 2 * * *"
     # Cotton Import Assessment: every 24 hours.
     - cron: "37 3 * * *"

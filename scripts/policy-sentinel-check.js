@@ -15,6 +15,7 @@ import {
   NON_VEHICLE_DUTY_CHOICE,
   resolveVehiclePartsDutyChoice
 } from "../public/vehicle-duty-choice-engine.js";
+import { selectSection232MetalCandidates } from "../public/section232-metal-engine.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, "..");
@@ -288,6 +289,26 @@ function checkFdaFd1PrinterPrompt(searchIndex, fdaFlags) {
 }
 
 function checkEpaEp5AndDoeFtcPrompts(searchIndex, epaFlags) {
+  const conveyorRow = findRowByDigits(searchIndex, "8428330000") || {
+    htsno: "8428.33.00.00",
+    description: "Other continuous-action elevators and conveyors, belt type"
+  };
+  const conveyorMatches = matchCertificationRules(conveyorRow, {
+    query: "8428330000",
+    epaFlags
+  });
+  const ep3 = conveyorMatches.find((match) => match.id === "epa-flag-ep3");
+  record(
+    "8428330000 resolves to exact EPA EP3 vehicle or engine filing prompt",
+    Boolean(
+      ep3
+      && ep3.summary === "可能需要 EPA 车辆或发动机进口申报"
+      && ep3.matchedExactCodes?.includes("8428330000")
+      && /车辆和发动机申报标志/.test(ep3.explanation || "")
+    ),
+    `matches=${conveyorMatches.map((match) => match.id).join(",") || "none"}`
+  );
+
   const applianceRow = findRowByDigits(searchIndex, "8509805095") || {
     htsno: "8509.80.50.95",
     description: "Other electromechanical domestic appliances"
@@ -302,7 +323,7 @@ function checkEpaEp5AndDoeFtcPrompts(searchIndex, epaFlags) {
     "8509805095 resolves to exact EPA EP5 without broad DOE/FTC 8509 hit",
     Boolean(
       ep5
-      && ep5.summary === "可能需要 EPA 进口申报"
+      && ep5.summary === "可能需要 EPA 农药及装置进口申报"
       && ep5.matchedExactCodes?.includes("8509805095")
       && !applianceIds.includes("doe-energy-labeling")
     ),
@@ -350,6 +371,27 @@ function checkSection232Snapshot(section232) {
     "section232 snapshot is non-empty and includes vehicle/derivative coverage",
     entries.length >= 1000 && hasVehicleOrDerivative,
     `count=${entries.length}; source=${section232.sourceUrl || section232.source?.url || "unknown"}`
+  );
+
+  const conveyorRawCodes = new Set(entries
+    .filter((entry) => cleanHts(entry.hts) === "84283300")
+    .map((entry) => entry.chapter99));
+  const conveyorCandidates = selectSection232MetalCandidates("8428330000", entries, "Free");
+  const applied = conveyorCandidates.find((candidate) => candidate.autoApply);
+  const candidateCodes = new Set(conveyorCandidates.map((candidate) => candidate.entry.chapter99));
+  record(
+    "8428330000 uses grouped 232 branches and defaults to 9903.82.10 at 15%",
+    conveyorRawCodes.has("9903.82.03")
+      && conveyorRawCodes.has("9903.82.07")
+      && conveyorRawCodes.has("9903.82.08")
+      && conveyorRawCodes.has("9903.82.10")
+      && conveyorRawCodes.has("9903.82.11")
+      && !conveyorRawCodes.has("9903.82.09")
+      && applied?.entry.chapter99 === "9903.82.10"
+      && Number(applied.rate) === 15
+      && candidateCodes.has("9903.82.03")
+      && candidateCodes.has("9903.82.07"),
+    `raw=${[...conveyorRawCodes].sort().join(",")}; candidates=${[...candidateCodes].sort().join(",")}; applied=${applied?.entry.chapter99 || "none"}; rate=${applied?.rate ?? "--"}`
   );
 }
 

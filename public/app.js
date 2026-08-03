@@ -14,7 +14,7 @@ import {
   getCertificationStatusMeta,
   matchCertificationRules,
   summarizeCertificationMatches
-} from "./certification-rule-engine.js?v=20260729-epa-ep5-2";
+} from "./certification-rule-engine.js?v=20260803-epa-ep3-1";
 import {
   buildClassificationCandidates,
   expandHtsPrefixRows,
@@ -32,6 +32,10 @@ import {
 } from "./vehicle-duty-choice-engine.js?v=20260801-vehicle-choice-1";
 import { getChapterTitle } from "./chapter-titles.js?v=20260729-bilingual-chapters";
 import { rankHtsSearchCandidates } from "./search-ranking.js?v=20260729-relevance-ranking-1";
+import {
+  describeSection232Condition,
+  selectSection232MetalCandidates
+} from "./section232-metal-engine.js?v=20260803-section232-grouped-headings-1";
 
 const section122FallbackExclusionPrefixes = [
   "84713001",
@@ -463,7 +467,7 @@ async function loadEpaFlags(force = false) {
     state.epaFlags = data?.codes ? data : null;
   } catch (error) {
     state.epaFlags = null;
-    console.warn(`EPA EP5 flag list unavailable: ${error.message}`);
+    console.warn(`EPA EP3/EP5 flag lists unavailable: ${error.message}`);
   }
 }
 
@@ -1918,12 +1922,15 @@ function handleManualAssessmentInput(event) {
 
 function renderAdditionalDutyItem(item, parsed, rule, applied) {
   const displayCode = rule.exempt && rule.exemptionCode ? rule.exemptionCode : item.htsno || rule.code || "Chapter 99";
+  const isSection232ZeroRate = rule.source === "section232" && parsed.auto && parsed.rate === 0;
   const rateLabel = rule.exempt
     ? parsed.auto && parsed.rate > 0
       ? `${formatRateNumber(parsed.rate)}% 豁免`
       : "豁免"
     : parsed.auto && parsed.rate > 0
     ? `+${parsed.rate}%`
+    : isSection232ZeroRate
+    ? "0% 条件项"
     : "需人工确认";
   const applyLabel = rule.exempt ? "豁免，未计入估算" : applied ? "已计入估算" : "未自动计入";
   const englishLine = rule.summaryZh ? "" : `<p class="en-line">${escapeHtml(item.description || "--")}</p>`;
@@ -1945,6 +1952,7 @@ function renderRestrictionItem(item, parsed, rule, applied) {
   const isSection232Miss = rule.source === "section232" && !/^99\d{2}\.\d{2}\.\d{2}$/.test(rule.code || "");
   const displayCode = rule.exempt && rule.exemptionCode ? rule.exemptionCode : item.htsno || rule.code || "Chapter 99";
   const code = isSection232Miss ? "未命中" : compactChapter99Code(displayCode);
+  const isSection232ZeroRate = rule.source === "section232" && parsed.auto && parsed.rate === 0;
   const rateLabel = rule.exempt
     ? parsed.auto && parsed.rate > 0
       ? `${formatRateNumber(parsed.rate)}% 不计入`
@@ -1953,6 +1961,8 @@ function renderRestrictionItem(item, parsed, rule, applied) {
     ? "不适用"
     : parsed.auto && parsed.rate > 0
     ? `${formatRateNumber(parsed.rate)}%`
+    : isSection232ZeroRate
+    ? "0%"
     : "需判断";
   const isChoiceOption = Boolean(rule.choiceGroup);
   const choiceSelected = isChoiceOption ? Boolean(rule.choiceSelected) : false;
@@ -3122,52 +3132,29 @@ function findStaticSection232Matches(hts, mappings, generalRateText = "", vehicl
   const normalized = normalizeStaticHtsDigits(hts);
   const entries = mappings.entries || [];
   const vehicleMatches = buildVehiclePartsSection232Matches(hts, normalized, vehiclePartsMappings);
-  const directMatches = entries.filter((entry) =>
-    normalized.startsWith(entry.hts) || entry.hts.startsWith(normalized)
-  );
-  if (!directMatches.length) {
+  const metalCandidates = selectSection232MetalCandidates(hts, entries, generalRateText);
+  if (!metalCandidates.length) {
     return vehicleMatches;
   }
 
-  const maxLength = Math.max(...directMatches.map((entry) => Math.min(entry.hts.length, normalized.length)));
-  const seen = new Set();
-  const bestLevelMatches = directMatches
-    .filter((entry) => Math.min(entry.hts.length, normalized.length) === maxLength)
-    .filter((entry) => {
-      const key = `${entry.chapter99}|${entry.hts}`;
-      if (seen.has(key)) {
-        return false;
-      }
-      seen.add(key);
-      return true;
-    });
-
-  const baseRate = parseStaticSimplePercent(generalRateText);
-  const ranked = bestLevelMatches
-    .map((entry) => ({
-      entry,
-      rank: rankStaticSection232Match(entry, baseRate),
-      autoApply: !isStaticCountrySpecificSection232(entry) && rankStaticSection232Match(entry, baseRate) > 0
-    }))
-    .sort((a, b) => b.rank - a.rank || b.entry.hts.length - a.entry.hts.length || a.entry.chapter99.localeCompare(b.entry.chapter99));
-
-  const preferred = ranked[0];
-  if (!preferred) {
-    return vehicleMatches;
-  }
-
-  return [...vehicleMatches, {
-    code: preferred.entry.chapter99,
-    htsMatch: preferred.entry.displayHts,
-    normalizedMatch: preferred.entry.hts,
-    context: preferred.entry.context,
-    material: classifyStaticSection232Material(preferred.entry),
-    label: "232",
-    confidence: preferred.entry.hts.length === normalized.length ? "exact" : "prefix",
-    autoApply: preferred.autoApply,
-    alternatives: ranked.length,
-    source: "CBP Metals HTS List"
-  }];
+  return [...vehicleMatches, ...metalCandidates.map((candidate) => {
+    const condition = describeSection232Condition(candidate.entry.chapter99, generalRateText);
+    return {
+      code: candidate.entry.chapter99,
+      htsMatch: candidate.entry.displayHts,
+      normalizedMatch: candidate.entry.hts,
+      context: candidate.entry.context,
+      material: classifyStaticSection232Material(candidate.entry),
+      label: condition.label,
+      confidence: candidate.entry.hts.length === normalized.length ? "exact" : "prefix",
+      rate: candidate.rate,
+      autoApply: candidate.autoApply,
+      alternatives: metalCandidates.length,
+      summaryZh: condition.summary,
+      note: condition.note,
+      source: "CBP Metals HTS List"
+    };
+  })];
 }
 
 function buildVehiclePartsSection232Matches(hts, normalized = normalizeStaticHtsDigits(hts), mappings = {}) {

@@ -81,7 +81,7 @@ const sourceLabels = {
   cotton: ["Cotton Import Assessment", "eCFR 7 CFR 1205", "Cotton import assessment table.", "https://www.ecfr.gov/current/title-7/subtitle-B/chapter-XI/part-1205/subpart-ECFR80efc31412f8612"],
   adcvdOfficial: ["AD/CVD official ACCESS", "ITA ACCESS AD/CVD", "Official ACCESS status monitor.", "https://access.trade.gov/adcvd"],
   adcvdLocal: ["AD/CVD HTS match dataset", "Local AD/CVD data snapshot", "HTS match snapshot used by the static site.", "https://access.trade.gov/adcvd"],
-  epaFlags: ["EPA ACE EP5 HTS flags", "EPA / CustomsInfo public OGA list", "EPA EP5 exact HTS flags used for pesticide and device import filing prompts.", "https://www.epa.gov/compliance/importing-and-exporting-pesticides-and-devices"],
+  epaFlags: ["EPA ACE EP3/EP5 HTS flags", "EPA / CustomsInfo public OGA lists", "EPA EP3 vehicle/engine and EP5 pesticide/device exact HTS filing prompts.", "https://www.epa.gov/importing-exporting"],
   fdaFlags: ["FDA FD1-FD4 HTS flags", "FDA / CustomsInfo public OGA lists", "FDA flag meanings and exact HTS code lists used for FD1-FD4 entry prompts.", "https://www.fda.gov/industry/import-basics/harmonized-tariff-schedule-and-fd-flags"],
   translations: ["商品中文描述缓存", "构建期校核缓存", "发布前整理并校验的双语商品描述；访客浏览时不再逐条等待在线翻译。", ""]
 };
@@ -518,7 +518,7 @@ async function exportFdaFlags(manifest) {
 }
 
 async function exportEpaFlags(manifest) {
-  console.log("Exporting EPA ACE EP5 HTS flag list...");
+  console.log("Exporting EPA ACE EP3/EP5 HTS flag lists...");
   const filePath = path.join(dataDir, "epa-flags.json");
   const old = await readJsonSafe(filePath, null);
   let data;
@@ -541,7 +541,7 @@ async function exportEpaFlags(manifest) {
     if (!old?.codes || Object.keys(old.codes).length === 0) {
       throw error;
     }
-    console.warn(`EPA EP5 flag export failed, keeping previous snapshot: ${error.message}`);
+    console.warn(`EPA EP3/EP5 flag export failed, keeping previous snapshot: ${error.message}`);
     data = {
       ...old,
       generatedAt: now,
@@ -552,6 +552,9 @@ async function exportEpaFlags(manifest) {
 
   if (!data.codes?.["8509805095"]?.some((record) => record.flag === "EP5")) {
     throw new Error("EPA EP5 flag export failed sentinel: 8509.80.5095 is not present in EP5.");
+  }
+  if (!data.codes?.["8428330000"]?.some((record) => record.flag === "EP3")) {
+    throw new Error("EPA EP3 flag export failed sentinel: 8428.33.0000 is not present in EP3.");
   }
 
   await writeJson(filePath, data);

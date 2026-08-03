@@ -9,6 +9,10 @@ import { buildChineseSearchPlan } from "./public/chinese-search-helper.js";
 import { buildClassificationCandidates, expandHtsPrefixRows } from "./public/description-helper.js";
 import { rankHtsSearchCandidates } from "./public/search-ranking.js";
 import { chapterTitleCatalog } from "./public/chapter-titles.js";
+import {
+  describeSection232Condition,
+  selectSection232MetalCandidates
+} from "./public/section232-metal-engine.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.join(__dirname, "public");
@@ -2352,7 +2356,8 @@ function decodeXmlEntities(value) {
 
 function parseSection232Paragraphs(paragraphs) {
   const entries = [];
-  let currentChapter99 = "";
+  let currentChapter99Codes = [];
+  let currentHeadingContext = "";
   let currentContext = "";
   let effectiveNote = "";
 
@@ -2361,31 +2366,37 @@ function parseSection232Paragraphs(paragraphs) {
       effectiveNote = paragraph;
     }
 
-    const heading = paragraph.match(/^(9903\.\d{2}\.\d{2})\s*:/);
+    const heading = parseSection232Heading(paragraph);
     if (heading) {
-      currentChapter99 = heading[1];
-      currentContext = "";
+      currentChapter99Codes = heading.codes;
+      currentHeadingContext = heading.context;
+      currentContext = heading.context;
       continue;
     }
-    if (!currentChapter99 || !isSection232Chapter99(currentChapter99)) {
+    if (!currentChapter99Codes.length) {
       continue;
     }
 
     const codes = extractChapterOneToNinetySevenCodes(paragraph);
     if (!codes.length) {
       if (paragraph.length < 140 && /articles|classifications|aluminum|steel|copper/i.test(paragraph)) {
-        currentContext = paragraph.replace(/:$/, "");
+        currentContext = [currentHeadingContext, paragraph.replace(/:$/, "")]
+          .filter(Boolean)
+          .join(" — ");
       }
       continue;
     }
 
     for (const code of codes) {
-      entries.push({
-        chapter99: currentChapter99,
-        hts: normalizeHtsDigits(code),
-        displayHts: code,
-        context: currentContext || "Section 232 metals list"
-      });
+      for (const chapter99 of currentChapter99Codes) {
+        entries.push({
+          chapter99,
+          hts: normalizeHtsDigits(code),
+          displayHts: code,
+          context: currentContext || currentHeadingContext || "Section 232 metals list",
+          headingGroup: currentChapter99Codes.join("|")
+        });
+      }
     }
   }
 
@@ -2395,6 +2406,31 @@ function parseSection232Paragraphs(paragraphs) {
     effectiveNote: effectiveNote || "CBP Metals HTS List",
     entries
   };
+}
+
+function parseSection232Heading(paragraph) {
+  const text = String(paragraph || "").trim();
+  if (!/^9903\.\d{2}\.\d{2}\b/.test(text)) {
+    return null;
+  }
+
+  const prefix = text.match(/^((?:9903\.\d{2}\.\d{2})(?:\s*(?:,|and|&|\/)\s*9903\.\d{2}\.\d{2})*)/i);
+  if (!prefix) {
+    return null;
+  }
+  const codes = [...prefix[1].matchAll(/9903\.\d{2}\.\d{2}/g)]
+    .map((match) => match[0])
+    .filter(isSection232Chapter99);
+  if (!codes.length) {
+    return null;
+  }
+
+  const context = text
+    .slice(prefix[0].length)
+    .replace(/^\s*:?\s*/, "")
+    .replace(/:$/, "")
+    .trim();
+  return { codes: [...new Set(codes)], context };
 }
 
 function extractChapterOneToNinetySevenCodes(text) {
@@ -2420,52 +2456,29 @@ function findSection232Matches(hts, mappings, generalRateText = "", vehicleParts
   }
 
   const vehicleMatches = buildVehiclePartsSection232Matches(hts, normalized, vehiclePartsMappings);
-  const directMatches = mappings.entries.filter((entry) =>
-    normalized.startsWith(entry.hts) || entry.hts.startsWith(normalized)
-  );
-  if (!directMatches.length) {
+  const metalCandidates = selectSection232MetalCandidates(hts, mappings.entries, generalRateText);
+  if (!metalCandidates.length) {
     return vehicleMatches;
   }
 
-  const maxLength = Math.max(...directMatches.map((entry) => Math.min(entry.hts.length, normalized.length)));
-  const seen = new Set();
-  const bestLevelMatches = directMatches
-    .filter((entry) => Math.min(entry.hts.length, normalized.length) === maxLength)
-    .filter((entry) => {
-      const key = `${entry.chapter99}|${entry.hts}`;
-      if (seen.has(key)) {
-        return false;
-      }
-      seen.add(key);
-      return true;
-    });
-
-  const baseRate = parseSimplePercent(generalRateText);
-  const ranked = bestLevelMatches
-    .map((entry) => ({
-      entry,
-      rank: rankSection232Match(entry, baseRate),
-      autoApply: !isCountrySpecificSection232(entry) && rankSection232Match(entry, baseRate) > 0
-    }))
-    .sort((a, b) => b.rank - a.rank || b.entry.hts.length - a.entry.hts.length || a.entry.chapter99.localeCompare(b.entry.chapter99));
-
-  const preferred = ranked[0];
-  if (!preferred) {
-    return vehicleMatches;
-  }
-
-  return [...vehicleMatches, {
-    code: preferred.entry.chapter99,
-    htsMatch: preferred.entry.displayHts,
-    normalizedMatch: preferred.entry.hts,
-    context: preferred.entry.context,
-    material: classifySection232Material(preferred.entry),
-    label: "232-钢铁铝加征",
-    confidence: preferred.entry.hts.length === normalized.length ? "exact" : "prefix",
-    autoApply: preferred.autoApply,
-    alternatives: ranked.length,
-    source: "CBP Metals HTS List"
-  }];
+  return [...vehicleMatches, ...metalCandidates.map((candidate) => {
+    const condition = describeSection232Condition(candidate.entry.chapter99, generalRateText);
+    return {
+      code: candidate.entry.chapter99,
+      htsMatch: candidate.entry.displayHts,
+      normalizedMatch: candidate.entry.hts,
+      context: candidate.entry.context,
+      material: classifySection232Material(candidate.entry),
+      label: condition.label,
+      confidence: candidate.entry.hts.length === normalized.length ? "exact" : "prefix",
+      rate: candidate.rate,
+      autoApply: candidate.autoApply,
+      alternatives: metalCandidates.length,
+      summaryZh: condition.summary,
+      note: condition.note,
+      source: "CBP Metals HTS List"
+    };
+  })];
 }
 
 function buildVehiclePartsSection232Matches(hts, normalized = normalizeHtsDigits(hts), mappings = {}) {

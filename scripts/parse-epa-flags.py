@@ -11,60 +11,81 @@ from email.utils import parsedate_to_datetime
 import xlrd
 
 
-OFFICIAL_URL = "https://www.epa.gov/compliance/importing-and-exporting-pesticides-and-devices"
-CBP_REFERENCE_URL = "https://content.govdelivery.com/accounts/USDHSCBP/bulletins/25b0fed"
-LIST_URL = "https://syslp.customsinfo.com/Sections/ResearchTools/OGA/Download/EP5.xls"
-FLAG_META = {
-    "status": "review",
-    "nameZh": "EP5 可能需要 EPA 进口申报",
-    "nameEn": "EPA Pesticide Notice of Arrival May Be Required",
-    "meaningZh": "该 HTS 在 ACE 中带有 EP5 精确监管标志，可能需要提交 EPA 农药及装置进口申报/到货通知。",
-    "meaningEn": "The HTS is flagged EP5 in ACE; EPA pesticide or device Notice of Arrival data may be required.",
+OFFICIAL_URL = "https://www.epa.gov/importing-vehicles-and-engines"
+PESTICIDE_OFFICIAL_URL = "https://www.epa.gov/compliance/importing-and-exporting-pesticides-and-devices"
+CBP_REFERENCE_URL = "https://www.cbp.gov/sites/default/files/2024-08/ACE%20CATAIR%20EPA%20Supplemental%20Guidelines%20v17%2008-01-24%20FINAL_508.pdf"
+LIST_BASE_URL = "https://syslp.customsinfo.com/Sections/ResearchTools/OGA/Download"
+FLAG_CONFIG = {
+    "EP3": {
+        "url": f"{LIST_BASE_URL}/EP3.xls",
+        "status": "review",
+        "nameZh": "EP3 可能需要 EPA 车辆或发动机进口申报",
+        "nameEn": "EPA Vehicle or Engine Declaration May Be Required",
+        "meaningZh": "该 HTS 在 ACE 中带有 EP3 精确监管标志，装有受监管发动机的车辆、机械或设备可能需要 EPA 车辆/发动机进口申报。",
+        "meaningEn": "The HTS is flagged EP3 in ACE; an EPA vehicle or engine declaration may be required for regulated engines, vehicles, or equipment.",
+        "officialUrl": OFFICIAL_URL,
+    },
+    "EP5": {
+        "url": f"{LIST_BASE_URL}/EP5.xls",
+        "status": "review",
+        "nameZh": "EP5 可能需要 EPA 农药及装置进口申报",
+        "nameEn": "EPA Pesticide Notice of Arrival May Be Required",
+        "meaningZh": "该 HTS 在 ACE 中带有 EP5 精确监管标志，可能需要提交 EPA 农药及装置进口申报/到货通知。",
+        "meaningEn": "The HTS is flagged EP5 in ACE; EPA pesticide or device Notice of Arrival data may be required.",
+        "officialUrl": PESTICIDE_OFFICIAL_URL,
+    },
 }
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Download and parse the EPA ACE EP5 HTS flag list.")
+    parser = argparse.ArgumentParser(description="Download and parse EPA ACE EP3 and EP5 HTS flag lists.")
     parser.add_argument("--timeout", type=int, default=45)
     args = parser.parse_args()
 
     generated_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-    payload, last_modified = download(LIST_URL, args.timeout)
-    rows, sheet_name, dataset_date = parse_workbook(payload)
-    codes = {
-        hts: [{"flag": "EP5", "description": description}]
-        for hts, description in rows
-    }
+    codes = {}
+    flags = {}
+    list_sources = []
+    total_rows = 0
+
+    for flag, config in FLAG_CONFIG.items():
+        payload, last_modified = download(config["url"], args.timeout)
+        rows, sheet_name, dataset_date = parse_workbook(payload)
+        total_rows += len(rows)
+        for hts, description in rows:
+            codes.setdefault(hts, []).append({"flag": flag, "description": description})
+
+        list_sources.append({
+            "flag": flag,
+            "url": config["url"],
+            "count": len(rows),
+            "datasetDate": dataset_date,
+            "lastModified": last_modified,
+        })
+        flags[flag] = {
+            **{key: value for key, value in config.items() if key != "url"},
+            "count": len(rows),
+            "datasetDate": dataset_date,
+            "sheetName": sheet_name,
+            "sourceUrl": config["url"],
+            "lastModified": last_modified,
+            "sha256": hashlib.sha256(payload).hexdigest(),
+        }
 
     snapshot = {
         "generatedAt": generated_at,
-        "count": len(rows),
+        "count": total_rows,
         "uniqueCodeCount": len(codes),
         "source": {
-            "name": "EPA ACE EP5 / CustomsInfo public OGA HTS flag list",
+            "name": "EPA ACE EP3/EP5 / CustomsInfo public OGA HTS flag lists",
             "officialUrl": OFFICIAL_URL,
+            "pesticideOfficialUrl": PESTICIDE_OFFICIAL_URL,
             "cbpReferenceUrl": CBP_REFERENCE_URL,
-            "providerName": "CustomsInfo public OGA HTS flag list",
-            "listSources": [{
-                "flag": "EP5",
-                "url": LIST_URL,
-                "count": len(rows),
-                "datasetDate": dataset_date,
-                "lastModified": last_modified,
-            }],
-            "noteZh": "EP5 含义采用 EPA/CBP 官方说明；精确 HTS 清单来自公开 OGA 下载文件，并按每日任务监控更新。",
+            "providerName": "CustomsInfo public OGA HTS flag lists",
+            "listSources": list_sources,
+            "noteZh": "EP3/EP5 含义采用 EPA/CBP 官方说明；精确 HTS 清单来自公开 OGA 下载文件，并按每日任务监控更新。HTS 标志属于申报提示，不等同于自动认定必须认证或申报。",
         },
-        "flags": {
-            "EP5": {
-                **FLAG_META,
-                "count": len(rows),
-                "datasetDate": dataset_date,
-                "sheetName": sheet_name,
-                "sourceUrl": LIST_URL,
-                "lastModified": last_modified,
-                "sha256": hashlib.sha256(payload).hexdigest(),
-            }
-        },
+        "flags": flags,
         "codes": dict(sorted(codes.items())),
     }
     json.dump(snapshot, sys.stdout, ensure_ascii=False, separators=(",", ":"))
