@@ -502,13 +502,13 @@ export const certificationCatalog = [
     nameEn: "FCC Equipment Authorization",
     category: "radio-frequency",
     status: "review",
-    suppresses: ["fcc-digital-device-sdoc"],
+    suppresses: ["fcc-digital-device-sdoc", "fcc-active-component-sdoc"],
     rule: {
       mode: "all",
-      prefixes: ["8471", "8517", "8525", "8526", "8527", "8528", "8543", "8806", "9503"],
+      prefixes: ["8471", "8517", "8525", "8526", "8527", "8528", "8536", "8537", "8543", "8806", "9503"],
       keywords: [
-        "wireless", "wifi", "wi-fi", "bluetooth", "radio", "rf", "transmitter", "router", "antenna", "cellular", "drone", "smart",
-        "无线", "蓝牙", "路由器", "射频", "发射器", "天线", "蜂窝", "无人机", "智能"
+        "wireless", "wifi", "wi-fi", "bluetooth", "radio", "rf", "transmitter", "router", "antenna", "cellular", "drone",
+        "无线", "蓝牙", "路由器", "射频", "发射器", "天线", "蜂窝", "无人机"
       ]
     },
     summary: "带无线、蓝牙、WiFi、射频发射/接收功能的电子设备可能需要 FCC 设备授权。",
@@ -526,13 +526,35 @@ export const certificationCatalog = [
     status: "review",
     rule: {
       mode: "any",
-      prefixes: ["8471", "8504", "8517", "8525", "8526", "8527", "8528", "8529", "8536", "8537", "8543", "9504"],
-      keywords: ["computer", "monitor", "adapter", "charger", "electronics", "digital", "smart", "电脑", "显示器", "适配器", "充电器", "电子", "数码", "智能"]
+      prefixes: ["8471", "8517", "8525", "8526", "8527", "8528", "8529", "8543", "9504"],
+      keywords: ["computer", "monitor", "adapter", "charger", "digital", "smart", "电脑", "显示器", "适配器", "充电器", "数码", "智能"]
     },
     summary: "数字电子设备、充电器、适配器、电脑周边等可能涉及 FCC Part 15 SDoC 或设备授权要求。",
     explanation: "是否需要 FCC SDoC、Certification 或豁免，取决于是否为 intentional/unintentional radiator、工作频段、供电方式和销售形态。若同时带无线功能，应优先复核 FCC Equipment Authorization。",
     sourceName: "FCC Equipment Authorization",
     sourceUrl: "https://www.fcc.gov/engineering-technology/laboratory-division/general/equipment-authorization"
+  },
+  {
+    id: "fcc-active-component-sdoc",
+    sequence: 15.06,
+    agency: "FCC",
+    nameZh: "FCC Part 15 主动电子部件/SDoC",
+    nameEn: "FCC Part 15 Active Electronic Component Supplier's Declaration of Conformity",
+    category: "radio-frequency",
+    status: "review",
+    rule: {
+      mode: "all",
+      prefixes: ["8504", "8536", "8537"],
+      keywords: [
+        "switching power supply", "external power supply", "adapter", "charger", "digital controller", "digital control",
+        "computer peripheral", "active electronic", "smart switch", "programmable", "microprocessor", "smart",
+        "开关电源", "外置电源", "适配器", "充电器", "数字控制", "电脑外设", "有源电子", "智能开关", "可编程", "微处理器", "智能"
+      ]
+    },
+    summary: "归入电源、开关或控制装置税号的商品，只有带主动数字电路、开关电源或智能控制功能时才提示 FCC Part 15 适用性。",
+    explanation: "普通无源连接器、机械开关、继电器、熔断器和变压器不因 HTS 编码本身触发 FCC SDoC。带高频开关、数字处理、可编程控制或电脑外设功能时，应按 unintentional radiator 复核；带无线发射功能时应优先复核 FCC Equipment Authorization。",
+    sourceName: "47 CFR 15.3 and 15.101",
+    sourceUrl: "https://www.ecfr.gov/current/title-47/chapter-I/subchapter-A/part-15/subpart-B/section-15.101"
   },
   {
     id: "doe-energy-labeling",

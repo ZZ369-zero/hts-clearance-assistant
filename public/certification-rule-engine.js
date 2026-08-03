@@ -1,4 +1,4 @@
-import { certificationCatalog } from "./certification-catalog.js?v=20260803-epa-ep3-1";
+import { certificationCatalog } from "./certification-catalog.js?v=20260803-fcc-passive-1";
 
 const statusMeta = {
   high: {
