@@ -83,6 +83,14 @@ const englishDescriptionOverrides = new Map([
     "无刷式。"
   ],
   [
+    "electrically operated",
+    "电动式："
+  ],
+  [
+    "with opto-electronic display only",
+    "仅带光电显示器。"
+  ],
+  [
     "dairy",
     "乳用："
   ],

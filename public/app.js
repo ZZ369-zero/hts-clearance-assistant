@@ -15,12 +15,13 @@ import {
   matchCertificationRules,
   summarizeCertificationMatches
 } from "./certification-rule-engine.js?v=20260803-fcc-passive-1";
+import { expandChapter91StatisticalRows } from "./chapter91-statistical-notes.js?v=20260804-statistical-suffixes-1";
 import {
   buildClassificationCandidates,
   expandHtsPrefixRows,
   getPreferredDescriptionZh,
   isUsableChineseDescription
-} from "./description-helper.js?v=20260729-preserved-path-1";
+} from "./description-helper.js?v=20260804-chapter91-terms-1";
 import {
   matchForcedLaborExemptions
 } from "./forced-labor-exemption-engine.js?v=20260801-trade-overlap-1";
@@ -2761,7 +2762,9 @@ async function staticApi(path, options = {}) {
 
   if (pathname === "/api/chapter") {
     const chapter = String(url.searchParams.get("chapter") || "01").padStart(2, "0");
-    return loadStaticData(`chapters/${chapter}.json`, forceRefresh);
+    const data = await loadStaticData(`chapters/${chapter}.json`, forceRefresh);
+    const rows = expandChapter91StatisticalRows(data.value || []);
+    return { ...data, count: rows.length, value: rows };
   }
 
   if (pathname === "/api/additional-duties") {
@@ -2871,7 +2874,7 @@ async function staticSearch(query, force = false) {
 }
 
 function buildStaticSearchCandidates(rows) {
-  return buildClassificationCandidates(hydrateDescriptionTranslations(rows));
+  return buildClassificationCandidates(hydrateDescriptionTranslations(expandChapter91StatisticalRows(rows)));
 }
 
 function buildStaticSearchPlan(query, translatedQuery = "") {
@@ -3094,7 +3097,7 @@ function escapeRegExpForSearch(value) {
 async function staticSearchByHts(digits, force = false) {
   const chapter = digits.slice(0, 2);
   const data = await loadStaticData(`chapters/${chapter}.json`, force);
-  return expandHtsPrefixRows(data.value || [], digits, { limit: 300 });
+  return expandHtsPrefixRows(expandChapter91StatisticalRows(data.value || []), digits, { limit: 300 });
 }
 
 async function staticSection232(hts, generalRateText = "") {

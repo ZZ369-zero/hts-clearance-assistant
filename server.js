@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { inflateRawSync } from "node:zlib";
 import { chineseSearchCatalog } from "./public/search-catalog.js";
 import { buildChineseSearchPlan } from "./public/chinese-search-helper.js";
+import { expandChapter91StatisticalRows } from "./public/chapter91-statistical-notes.js";
 import { buildClassificationCandidates, expandHtsPrefixRows } from "./public/description-helper.js";
 import { rankHtsSearchCandidates } from "./public/search-ranking.js";
 import { chapterTitleCatalog } from "./public/chapter-titles.js";
@@ -2851,7 +2852,7 @@ function scoreServerSearchCandidate(candidate, plan) {
 async function searchStaticHtsPrefixRows(digits) {
   const chapterPath = path.join(publicDir, "data", "chapters", `${digits.slice(0, 2)}.json`);
   const data = JSON.parse(await readFile(chapterPath, "utf8"));
-  return expandHtsPrefixRows(data.value || [], digits, { limit: 300 });
+  return expandHtsPrefixRows(expandChapter91StatisticalRows(data.value || []), digits, { limit: 300 });
 }
 
 function scoreServerCandidateTerms(candidate, terms) {
@@ -3026,7 +3027,7 @@ function normalizeRows(rows) {
       status: cleanValue(row.status)
     };
   }));
-  return normalized.map(applyKnownAdditionalDutyOverrides);
+  return expandChapter91StatisticalRows(normalized.map(applyKnownAdditionalDutyOverrides));
 }
 
 function getSupplementalChapter99Rows(policyRules = {}) {
