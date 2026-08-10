@@ -36,12 +36,12 @@ on:
       translation_model:
         description: "Copilot CLI model for initial Chinese translations"
         required: false
-        default: "gpt-5"
+        default: "copilot-default"
         type: string
       review_model:
         description: "Copilot CLI model for independent Chinese translation review"
         required: false
-        default: "gpt-5"
+        default: "copilot-default"
         type: string
   schedule:
     # HTS / normal duty / Chapter 99: every 1 hour.
@@ -130,8 +130,8 @@ jobs:
         if: github.event_name != 'push' && (contains(steps.scope.outputs.scope, 'translations') || steps.scope.outputs.scope == 'all')
         env:
           COPILOT_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          COPILOT_TRANSLATION_MODEL: ${{ github.event_name == 'workflow_dispatch' && inputs.translation_model || 'gpt-5' }}
-          COPILOT_REVIEW_MODEL: ${{ github.event_name == 'workflow_dispatch' && inputs.review_model || 'gpt-5' }}
+          COPILOT_TRANSLATION_MODEL: ${{ github.event_name == 'workflow_dispatch' && inputs.translation_model || 'copilot-default' }}
+          COPILOT_REVIEW_MODEL: ${{ github.event_name == 'workflow_dispatch' && inputs.review_model || 'copilot-default' }}
           COPILOT_MAX_AI_CREDITS: "30"
           TRANSLATION_BATCH_LIMIT: ${{ github.event_name == 'workflow_dispatch' && inputs.translation_limit || '2000' }}
           TRANSLATION_BATCH_SIZE: "40"

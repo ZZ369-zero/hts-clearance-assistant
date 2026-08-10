@@ -19,7 +19,8 @@ const dryRun = process.argv.includes("--dry-run");
 const selfTest = process.argv.includes("--self-test");
 const token = process.env.COPILOT_GITHUB_TOKEN || process.env.GITHUB_TOKEN || "";
 const provider = "github-copilot-cli";
-const translationModel = process.env.COPILOT_TRANSLATION_MODEL || process.env.COPILOT_MODEL || "gpt-5";
+const copilotDefaultModel = "copilot-default";
+const translationModel = process.env.COPILOT_TRANSLATION_MODEL || process.env.COPILOT_MODEL || copilotDefaultModel;
 const reviewModel = process.env.COPILOT_REVIEW_MODEL || translationModel;
 const copilotCommand = process.env.COPILOT_CLI_PATH || "copilot";
 const batchLimit = positiveInteger(process.env.TRANSLATION_BATCH_LIMIT, 2000);
@@ -400,7 +401,7 @@ async function invokeCopilot(prompt, modelName) {
       "--no-remote",
       "--no-remote-export",
       `--max-ai-credits=${maxAiCredits}`,
-      `--model=${modelName}`
+      ...modelCliArgs(modelName)
     ], {
       env: {
         ...process.env,
@@ -507,6 +508,10 @@ function validateExactEntries(parsed, key, expectedIds, requiredStringFields = [
 
 function stripAnsi(value) {
   return String(value || "").replace(/\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g, "");
+}
+
+function modelCliArgs(modelName) {
+  return modelName && modelName !== copilotDefaultModel ? [`--model=${modelName}`] : [];
 }
 
 function normalizeTariffTranslation(english, translation) {
