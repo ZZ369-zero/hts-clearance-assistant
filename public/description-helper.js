@@ -272,7 +272,7 @@ function isChemicalLikeDescription(description) {
 }
 
 function isStructuredChemicalChinese(value) {
-  return /(?:化学品|化合物|CAS号|归入子目|归入品目)/.test(String(value || ""));
+  return /(?:化学品|化合物|CAS号)/.test(String(value || ""));
 }
 
 export function buildClassificationCandidates(rows = []) {

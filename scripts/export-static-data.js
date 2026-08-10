@@ -619,7 +619,7 @@ async function exportTranslations(manifest) {
     descriptions.add(description);
     const exact = getExactDescriptionZh(row);
     const deterministic = getDeterministicDescriptionZh(row);
-    const translation = exact || values[description] || getPreferredDescriptionZh(row) || "";
+    const translation = exact || deterministic || values[description] || getPreferredDescriptionZh(row) || "";
     if (isUsableChineseDescription(translation)) {
       values[description] = translation;
       methods[description] = exact
