@@ -5,6 +5,7 @@ import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import {
   buildClassificationCandidates,
+  getDeterministicDescriptionZh,
   getExactDescriptionZh,
   getPreferredDescriptionZh,
   isUsableChineseDescription
@@ -617,10 +618,13 @@ async function exportTranslations(manifest) {
     }
     descriptions.add(description);
     const exact = getExactDescriptionZh(row);
+    const deterministic = getDeterministicDescriptionZh(row);
     const translation = exact || values[description] || getPreferredDescriptionZh(row) || "";
     if (isUsableChineseDescription(translation)) {
       values[description] = translation;
-      methods[description] = exact ? "curated" : (methods[description] || "local-glossary");
+      methods[description] = exact
+        ? "curated"
+        : (methods[description] || (deterministic && translation === deterministic ? "deterministic:chemical-structured" : "local-glossary"));
       coveredRows += 1;
     }
   }
@@ -633,6 +637,7 @@ async function exportTranslations(manifest) {
   const calibratedDescriptions = Object.values(methods)
     .filter((method) => method === "curated"
       || method === "github-models"
+      || String(method || "").startsWith("deterministic:")
       || String(method || "").startsWith("copilot-cli:")).length;
   const attempts = Object.fromEntries(
     Object.entries(old.attempts || {})

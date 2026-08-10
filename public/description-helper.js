@@ -97,6 +97,78 @@ const englishDescriptionOverrides = new Map([
   [
     "live bovine animals",
     "活牛科动物："
+  ],
+  [
+    "apparatus",
+    "装置"
+  ],
+  [
+    "battery",
+    "电池"
+  ],
+  [
+    "movement",
+    "机芯"
+  ],
+  [
+    "movement and case",
+    "机芯及表壳"
+  ],
+  [
+    "windshield wipers",
+    "挡风玻璃雨刮器"
+  ],
+  [
+    "windshields",
+    "挡风玻璃"
+  ],
+  [
+    "wild",
+    "野生"
+  ],
+  [
+    "wild blueberries",
+    "野生蓝莓"
+  ],
+  [
+    "wild rice",
+    "野生稻米"
+  ],
+  [
+    "wild rye",
+    "野黑麦"
+  ],
+  [
+    "wind turbine hubs",
+    "风力涡轮机轮毂"
+  ],
+  [
+    "winding wire",
+    "绕组线"
+  ],
+  [
+    "wire",
+    "线材"
+  ],
+  [
+    "wire bars",
+    "线锭"
+  ],
+  [
+    "wired glass",
+    "夹丝玻璃"
+  ],
+  [
+    "wired sheets",
+    "夹丝玻璃板"
+  ],
+  [
+    "wirewound",
+    "绕线式"
+  ],
+  [
+    "with fittings",
+    "带接头"
   ]
 ]);
 
@@ -132,6 +204,30 @@ export function getExactDescriptionZh(row = {}) {
   return englishDescriptionOverrides.get(description) || "";
 }
 
+export function getDeterministicDescriptionZh(row = {}) {
+  const description = String(row.description || row.descriptionEn || "").replace(/\s+/g, " ").trim();
+  if (!description || !isChemicalLikeDescription(description)) {
+    return "";
+  }
+
+  const normalized = description
+    .replace(/\bCAS Nos?\.\s*/gi, "CAS号 ")
+    .replace(/\bpercent by weight\b/gi, "重量百分比")
+    .replace(/\bmore than\b/gi, "超过")
+    .replace(/\bover\b/gi, "超过")
+    .replace(/\bnot less than\b/gi, "不少于")
+    .replace(/\bnot more than\b/gi, "不超过")
+    .replace(/\bcontaining\b/gi, "含有")
+    .replace(/\bmixtures?\b/gi, "混合物")
+    .replace(/\(provided (?:for )?in subn?heading ([\d.]+)\)/gi, "（归入子目 $1）")
+    .replace(/\(provided (?:for )?in heading ([\d.]+)\)/gi, "（归入品目 $1）")
+    .replace(/\s+([,;:])/g, "$1")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return `化学品/专用化合物：${normalized}`;
+}
+
 export function isUsableChineseDescription(value) {
   const text = String(value || "").trim();
   if (
@@ -142,9 +238,13 @@ export function isUsableChineseDescription(value) {
     return false;
   }
 
+  const chineseCount = (text.match(/[\u3400-\u9fff]/g) || []).length;
+  if (isStructuredChemicalChinese(text)) {
+    return chineseCount >= 3;
+  }
+
   const englishWords = text.match(/[A-Za-z][A-Za-z-]{1,}/g) || [];
   const unexplainedWords = englishWords.filter((word) => !allowedEnglishTokens.has(word.toLowerCase()));
-  const chineseCount = (text.match(/[\u3400-\u9fff]/g) || []).length;
   return unexplainedWords.length === 0 && chineseCount >= 1;
 }
 
@@ -155,7 +255,24 @@ export function getPreferredDescriptionZh(row = {}) {
   }
 
   const candidate = String(row.descriptionZh || "").trim();
-  return isUsableChineseDescription(candidate) ? candidate : "";
+  if (isUsableChineseDescription(candidate)) {
+    return candidate;
+  }
+
+  return getDeterministicDescriptionZh(row);
+}
+
+function isChemicalLikeDescription(description) {
+  const text = String(description || "");
+  if (/\bCAS\s+Nos?\./i.test(text)) {
+    return true;
+  }
+  const chemicalTerms = text.match(/\b(?:acid|amine|amide|azole|benz|bromo|carbam|chloride|chloro|cyano|diox|ester|ethyl|fluoro|hydroxy|methoxy|methyl|oxide|phenoxy|phenyl|phosph|propyl|sulfate|sulfide|sulfon|thiaz|triazo|yl)\b/gi) || [];
+  return chemicalTerms.length >= 2 && /\(provided (?:for )?in subn?heading [\d.]+\)/i.test(text);
+}
+
+function isStructuredChemicalChinese(value) {
+  return /(?:化学品|化合物|CAS号|归入子目|归入品目)/.test(String(value || ""));
 }
 
 export function buildClassificationCandidates(rows = []) {

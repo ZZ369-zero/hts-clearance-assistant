@@ -6,6 +6,8 @@ import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import {
   buildClassificationCandidates,
+  getDeterministicDescriptionZh,
+  getExactDescriptionZh,
   isUsableChineseDescription
 } from "../public/description-helper.js";
 
@@ -57,6 +59,8 @@ for (const row of rows) {
   descriptions.set(description, {
     description,
     htsno: String(row.htsno || ""),
+    descriptionEn: String(row.descriptionEn || row.description || ""),
+    descriptionZh: String(row.descriptionZh || ""),
     parent: String(row.classificationPath?.at(-1)?.description || "")
   });
 }
@@ -77,10 +81,27 @@ const attempts = Object.fromEntries(
   Object.entries(cache.attempts || {})
     .filter(([description, count]) => descriptions.has(description) && Number(count) > 0)
 );
+
+let deterministicAccepted = 0;
+for (const item of descriptions.values()) {
+  if (isCalibratedMethod(methods[item.description])) {
+    continue;
+  }
+  const exact = getExactDescriptionZh(item);
+  const deterministic = exact || getDeterministicDescriptionZh(item);
+  if (deterministic && isUsableChineseDescription(deterministic)) {
+    values[item.description] = deterministic;
+    methods[item.description] = exact ? "curated" : "deterministic:chemical-structured";
+    delete attempts[item.description];
+    deterministicAccepted += 1;
+  }
+}
+
 const pending = [...descriptions.values()]
   .filter(({ description }) => !isCalibratedMethod(methods[description]))
   .sort((left, right) =>
     Number(Boolean(values[left.description])) - Number(Boolean(values[right.description]))
+      || scoreDescriptionDifficulty(left.description) - scoreDescriptionDifficulty(right.description)
       || Number(attempts[left.description] || 0) - Number(attempts[right.description] || 0)
       || left.description.localeCompare(right.description)
   )
@@ -93,6 +114,7 @@ console.log(JSON.stringify({
   maxAiCredits,
   requestTimeoutMs,
   qualityCycles,
+  deterministicAccepted,
   totalDescriptions: descriptions.size,
   publishedDescriptions: Object.keys(values).length,
   calibratedDescriptions: calibratedBefore,
@@ -108,7 +130,7 @@ if (!token) {
   throw new Error("COPILOT_GITHUB_TOKEN or GITHUB_TOKEN is required for Copilot CLI translation.");
 }
 
-let accepted = 0;
+let accepted = deterministicAccepted;
 let rejected = 0;
 let deferred = 0;
 let translated = 0;
@@ -732,7 +754,26 @@ function positiveInteger(value, fallback) {
 function isCalibratedMethod(method) {
   return method === "curated"
     || method === "github-models"
+    || String(method || "").startsWith("deterministic:")
     || String(method || "").startsWith("copilot-cli:");
+}
+
+function scoreDescriptionDifficulty(description) {
+  const text = String(description || "");
+  let score = Math.min(200, Math.floor(text.length / 20));
+  if (/\bCAS\s+Nos?\./i.test(text)) {
+    score += 200;
+  }
+  if (/\(provided (?:for )?in subn?heading [\d.]+\)/i.test(text)) {
+    score += 120;
+  }
+  if (/[A-Za-z]{2,}[-)]?\d|[-\u2010-\u2015][A-Za-z]{2,}|\b(?:acid|chloride|sulfate|oxide|phenyl|methyl|ethyl|propyl|amine|azole|ester)\b/i.test(text)) {
+    score += 80;
+  }
+  if (/^[A-Z][A-Za-z ]{2,60}:?$/.test(text)) {
+    score -= 30;
+  }
+  return score;
 }
 
 function delay(milliseconds) {
