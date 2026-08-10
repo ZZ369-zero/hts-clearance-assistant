@@ -165,8 +165,8 @@ jobs:
             stats="$(node -e "const fs=require('fs'); const m=JSON.parse(fs.readFileSync('public/data/manifest.json','utf8')); const s=(m.sources||[]).find(x=>x.id==='translations')?.state?.detail||{}; console.log([s.acceptedThisRun||0,s.deferredThisRun||0,s.pendingCalibration||0].join(','));")"
             IFS=',' read -r accepted deferred pending <<< "$stats"
             echo "Translation checkpoint stats: accepted=$accepted deferred=$deferred pendingCalibration=$pending"
-            if [ "$accepted" = "0" ] && [ "$deferred" != "0" ]; then
-              echo "Provider deferred the current checkpoint; stopping without committing deferred-only data."
+            if [ "$accepted" = "0" ]; then
+              echo "No accepted translations in this checkpoint; stopping without committing attempt-only data."
               git restore -- public/data/manifest.json public/data/translations.json
               break
             fi

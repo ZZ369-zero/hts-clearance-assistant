@@ -310,6 +310,7 @@ async function translateBatch(items, cycle) {
     "Preserve every number, decimal, currency amount, percentage, HTS reference, material, use, exclusion, comparison boundary and trailing colon.",
     "Required terminology: electric motor=电动机; generator=发电机; generating set=发电机组; AC=交流; DC=直流; output=输出功率; W=瓦; kW=千瓦; parts=零件; accessories=附件; other=其他; whether or not=不论是否; excluding=不包括; provided for in=归入; not elsewhere specified or included=未列名或未包括.",
     "Do not explain, infer, omit, merge, summarize or add legal meaning. Do not leave English prose in zh.",
+    "Use compact valid JSON. Escape any newline inside a JSON string as \\n.",
     "Return JSON only as {\"translations\":[{\"id\":\"0\",\"zh\":\"...\"}]} with exactly one result for every input id.",
     `INPUT_JSON=${JSON.stringify({ items: numbered })}`
   ].join("\n"), translationModel, (value) =>
@@ -339,6 +340,7 @@ async function reviewBatch(candidates, cycle) {
     "Approve only if the final Chinese is exact, complete, legally faithful and fluent Simplified Chinese.",
     "If the candidate omits or adds meaning, mistranslates material/use/range/negation, leaves English prose, or loses numbers, return approved=false and provide a corrected zh.",
     "Keep every number, decimal, currency amount, percentage, HTS reference, material, use, exclusion, comparison boundary and trailing colon.",
+    "Use compact valid JSON. Escape any newline inside a JSON string as \\n.",
     "Return JSON only as {\"reviews\":[{\"id\":\"0\",\"approved\":true,\"zh\":\"...\",\"issues\":[]}]} with exactly one result for every input id.",
     `This is quality cycle ${cycle} of ${qualityCycles}.`,
     `INPUT_JSON=${JSON.stringify({ items: numbered })}`
@@ -427,16 +429,16 @@ function parseModelJson(value) {
   const text = stripAnsi(String(value || "")).trim();
   const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
   if (fenced) {
-    return JSON.parse(fenced[1].trim());
+    return parseJsonPayload(fenced[1].trim());
   }
   if (text.startsWith("{")) {
-    return JSON.parse(text);
+    return parseJsonPayload(text);
   }
   const object = extractFirstJsonObject(text);
   if (!object) {
     throw new Error("Model response did not contain a JSON object.");
   }
-  return JSON.parse(object);
+  return parseJsonPayload(object);
 }
 
 function extractFirstJsonObject(text) {
@@ -512,6 +514,54 @@ function stripAnsi(value) {
 
 function modelCliArgs(modelName) {
   return modelName && modelName !== copilotDefaultModel ? [`--model=${modelName}`] : [];
+}
+
+function parseJsonPayload(value) {
+  try {
+    return JSON.parse(value);
+  } catch (error) {
+    const repaired = escapeControlCharactersInsideJsonStrings(value);
+    if (repaired !== value) {
+      return JSON.parse(repaired);
+    }
+    throw error;
+  }
+}
+
+function escapeControlCharactersInsideJsonStrings(value) {
+  let output = "";
+  let inString = false;
+  let escaped = false;
+
+  for (const char of String(value || "")) {
+    if (!inString) {
+      output += char;
+      if (char === "\"") {
+        inString = true;
+      }
+      continue;
+    }
+
+    if (escaped) {
+      output += char;
+      escaped = false;
+    } else if (char === "\\") {
+      output += char;
+      escaped = true;
+    } else if (char === "\"") {
+      output += char;
+      inString = false;
+    } else if (char === "\n") {
+      output += "\\n";
+    } else if (char === "\r") {
+      output += "\\r";
+    } else if (char === "\t") {
+      output += "\\t";
+    } else {
+      output += char;
+    }
+  }
+  return output;
 }
 
 function normalizeTariffTranslation(english, translation) {
@@ -600,6 +650,10 @@ function runSelfTest() {
   assert.equal(
     parseModelJson("prefix {\"reviews\":[{\"id\":\"0\",\"approved\":true,\"zh\":\"其他：\",\"issues\":[]}]} suffix").reviews[0].approved,
     true
+  );
+  assert.equal(
+    parseModelJson("{\"translations\":[{\"id\":\"0\",\"zh\":\"第一行\n第二行\"}]}").translations[0].zh,
+    "第一行\n第二行"
   );
   assert.throws(
     () => validateExactEntries({ translations: [{ id: "0", zh: "其他：" }] }, "translations", ["0", "1"], ["zh"]),
