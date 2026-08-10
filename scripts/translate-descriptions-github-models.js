@@ -19,7 +19,7 @@ const dryRun = process.argv.includes("--dry-run");
 const selfTest = process.argv.includes("--self-test");
 const token = process.env.COPILOT_GITHUB_TOKEN || process.env.GITHUB_TOKEN || "";
 const provider = "github-copilot-cli";
-const translationModel = process.env.COPILOT_TRANSLATION_MODEL || process.env.COPILOT_MODEL || "gpt-5.4";
+const translationModel = process.env.COPILOT_TRANSLATION_MODEL || process.env.COPILOT_MODEL || "gpt-5";
 const reviewModel = process.env.COPILOT_REVIEW_MODEL || translationModel;
 const copilotCommand = process.env.COPILOT_CLI_PATH || "copilot";
 const batchLimit = positiveInteger(process.env.TRANSLATION_BATCH_LIMIT, 2000);
@@ -415,11 +415,10 @@ async function invokeCopilot(prompt, modelName) {
     }
     return String(stdout);
   } catch (error) {
-    const messageTail = String(error?.message || "").split(/\r?\n/).slice(-4).join(" ");
-    const detail = [error?.stderr, error?.stdout, `exit=${error?.code || "unknown"}`, messageTail]
+    const detail = [error?.stderr, error?.stdout, `exit=${error?.code || "unknown"}`]
       .filter(Boolean)
       .join(" ");
-    throw new Error(`Copilot CLI request failed: ${stripAnsi(detail).slice(0, 1000)}`);
+    throw new Error(`Copilot CLI request failed: ${stripAnsi(detail || "unknown error").slice(0, 1000)}`);
   }
 }
 

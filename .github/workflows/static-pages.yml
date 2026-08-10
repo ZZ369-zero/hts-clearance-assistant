@@ -33,6 +33,16 @@ on:
         required: false
         default: "400"
         type: string
+      translation_model:
+        description: "Copilot CLI model for initial Chinese translations"
+        required: false
+        default: "gpt-5"
+        type: string
+      review_model:
+        description: "Copilot CLI model for independent Chinese translation review"
+        required: false
+        default: "gpt-5"
+        type: string
   schedule:
     # HTS / normal duty / Chapter 99: every 1 hour.
     - cron: "7 * * * *"
@@ -120,8 +130,8 @@ jobs:
         if: github.event_name != 'push' && (contains(steps.scope.outputs.scope, 'translations') || steps.scope.outputs.scope == 'all')
         env:
           COPILOT_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          COPILOT_TRANSLATION_MODEL: "gpt-5.4"
-          COPILOT_REVIEW_MODEL: "gpt-5.4"
+          COPILOT_TRANSLATION_MODEL: ${{ github.event_name == 'workflow_dispatch' && inputs.translation_model || 'gpt-5' }}
+          COPILOT_REVIEW_MODEL: ${{ github.event_name == 'workflow_dispatch' && inputs.review_model || 'gpt-5' }}
           COPILOT_MAX_AI_CREDITS: "30"
           TRANSLATION_BATCH_LIMIT: ${{ github.event_name == 'workflow_dispatch' && inputs.translation_limit || '2000' }}
           TRANSLATION_BATCH_SIZE: "40"
@@ -152,6 +162,15 @@ jobs:
             echo "Translation checkpoint: processing up to $current descriptions ($processed/$target already requested)."
             TRANSLATION_BATCH_LIMIT="$current" node scripts/translate-descriptions-github-models.js
 
+            stats="$(node -e "const fs=require('fs'); const m=JSON.parse(fs.readFileSync('public/data/manifest.json','utf8')); const s=(m.sources||[]).find(x=>x.id==='translations')?.state?.detail||{}; console.log([s.acceptedThisRun||0,s.deferredThisRun||0,s.pendingCalibration||0].join(','));")"
+            IFS=',' read -r accepted deferred pending <<< "$stats"
+            echo "Translation checkpoint stats: accepted=$accepted deferred=$deferred pendingCalibration=$pending"
+            if [ "$accepted" = "0" ] && [ "$deferred" != "0" ]; then
+              echo "Provider deferred the current checkpoint; stopping without committing deferred-only data."
+              git restore -- public/data/manifest.json public/data/translations.json
+              break
+            fi
+
             git add public/data/manifest.json public/data/translations.json
             if git diff --cached --quiet; then
               echo "No translation cache changes to commit."
@@ -161,15 +180,8 @@ jobs:
             git commit -m "chore: update Chinese description translations [skip ci]"
             git push
 
-            stats="$(node -e "const fs=require('fs'); const m=JSON.parse(fs.readFileSync('public/data/manifest.json','utf8')); const s=(m.sources||[]).find(x=>x.id==='translations')?.state?.detail||{}; console.log([s.acceptedThisRun||0,s.deferredThisRun||0,s.pendingCalibration||0].join(','));")"
-            IFS=',' read -r accepted deferred pending <<< "$stats"
-            echo "Translation checkpoint stats: accepted=$accepted deferred=$deferred pendingCalibration=$pending"
             if [ "$pending" = "0" ]; then
               echo "Chinese description calibration is complete."
-              break
-            fi
-            if [ "$accepted" = "0" ] && [ "$deferred" != "0" ]; then
-              echo "Provider deferred the current checkpoint; stopping to preserve credits."
               break
             fi
             processed=$((processed + current))
