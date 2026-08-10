@@ -3255,16 +3255,12 @@ const knownAdditionalDutyCodeOverrides = new Map([
 
 function applyKnownAdditionalDutyOverrides(row) {
   const allowedCodes = knownAdditionalDutyCodeOverrides.get(normalizeHtsDigits(row.htsno));
-  if (!allowedCodes || !(row.additionalDutyCodes || []).length) {
+  if (!allowedCodes) {
     return row;
   }
 
-  row.additionalDutyCodes = row.additionalDutyCodes.filter((code) => {
-    if (!isChina301DutyCode(code)) {
-      return true;
-    }
-    return allowedCodes.has(code);
-  });
+  const nonChinaCodes = (row.additionalDutyCodes || []).filter((code) => !isChina301DutyCode(code));
+  row.additionalDutyCodes = [...new Set([...nonChinaCodes, ...allowedCodes])];
   return row;
 }
 

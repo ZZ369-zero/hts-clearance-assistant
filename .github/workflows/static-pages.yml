@@ -160,6 +160,7 @@ jobs:
             if [ "$current" -gt "$remaining" ]; then current="$remaining"; fi
 
             echo "Translation checkpoint: processing up to $current descriptions ($processed/$target already requested)."
+            git pull --rebase origin "${GITHUB_REF_NAME}"
             TRANSLATION_BATCH_LIMIT="$current" node scripts/translate-descriptions-github-models.js
 
             stats="$(node -e "const fs=require('fs'); const m=JSON.parse(fs.readFileSync('public/data/manifest.json','utf8')); const s=(m.sources||[]).find(x=>x.id==='translations')?.state?.detail||{}; console.log([s.acceptedThisRun||0,s.deferredThisRun||0,s.pendingCalibration||0].join(','));")"

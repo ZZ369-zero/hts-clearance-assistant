@@ -13,7 +13,8 @@ const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const chapterPath = path.join(rootDir, "public", "data", "chapters", "91.json");
 const chapter = JSON.parse(await readFile(chapterPath, "utf8"));
 const sourceRows = chapter.value || [];
-const noteParents = sourceRows.filter((row) =>
+const baseRows = sourceRows.filter((row) => !row.derivedFromChapterNote);
+const noteParents = baseRows.filter((row) =>
   (row.footnotes || []).some((note) => /See statistical note 1 to this chapter/i.test(note.value || ""))
 );
 const sourceParents = new Set(noteParents.map((row) => digits(row.htsno)));
@@ -24,10 +25,12 @@ assert(CHAPTER_91_STATISTICAL_REPORTING_COUNT === 293, `Expected 293 reporting r
 assert(sourceParents.size === 95, `Current Chapter 91 snapshot has ${sourceParents.size} note-1 base subheadings instead of 95`);
 assertSetsEqual(configuredParents, sourceParents, "Configured Chapter 91 subheadings do not match the current official snapshot");
 
-const expanded = expandChapter91StatisticalRows(sourceRows);
+const expanded = expandChapter91StatisticalRows(baseRows);
 const expandedTwice = expandChapter91StatisticalRows(expanded);
-assert(expanded.length === sourceRows.length + 293, `Expected 293 synthesized rows, got ${expanded.length - sourceRows.length}`);
+const exportedExpanded = expandChapter91StatisticalRows(sourceRows);
+assert(expanded.length === baseRows.length + 293, `Expected 293 synthesized rows, got ${expanded.length - baseRows.length}`);
 assert(expandedTwice.length === expanded.length, "Chapter 91 statistical expansion is not idempotent");
+assert(exportedExpanded.length === sourceRows.length, "Chapter 91 exported static snapshot should already be idempotent");
 
 const reportingRows = expanded.filter((row) => row.derivedFromChapterNote);
 const reportingCodes = new Set(reportingRows.map((row) => digits(row.htsno)));
