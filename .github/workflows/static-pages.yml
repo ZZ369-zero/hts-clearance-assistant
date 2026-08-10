@@ -28,6 +28,11 @@ on:
         required: false
         default: "20"
         type: string
+      translation_chunk_size:
+        description: "Checkpoint size for long Chinese translation runs"
+        required: false
+        default: "400"
+        type: string
   schedule:
     # HTS / normal duty / Chapter 99: every 1 hour.
     - cron: "7 * * * *"
@@ -58,6 +63,7 @@ concurrency:
 jobs:
   export-and-deploy:
     runs-on: ubuntu-latest
+    timeout-minutes: 350
     environment:
       name: ${{ github.ref == 'refs/heads/main' && 'github-pages' || 'translation-validation' }}
       url: ${{ steps.deployment.outputs.page_url }}
@@ -114,10 +120,60 @@ jobs:
         if: github.event_name != 'push' && (contains(steps.scope.outputs.scope, 'translations') || steps.scope.outputs.scope == 'all')
         env:
           COPILOT_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          COPILOT_MODEL: "gpt-5.4"
+          COPILOT_TRANSLATION_MODEL: "gpt-5.4"
+          COPILOT_REVIEW_MODEL: "gpt-5.4"
+          COPILOT_MAX_AI_CREDITS: "30"
           TRANSLATION_BATCH_LIMIT: ${{ github.event_name == 'workflow_dispatch' && inputs.translation_limit || '2000' }}
-          TRANSLATION_BATCH_SIZE: "20"
-        run: node scripts/translate-descriptions-github-models.js
+          TRANSLATION_BATCH_SIZE: "40"
+          TRANSLATION_CHUNK_SIZE: ${{ github.event_name == 'workflow_dispatch' && inputs.translation_chunk_size || '400' }}
+          TRANSLATION_QUALITY_CYCLES: "2"
+          COPILOT_REQUEST_RETRIES: "3"
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/translate-descriptions-github-models.js --self-test
+
+          target="${TRANSLATION_BATCH_LIMIT:-2000}"
+          chunk="${TRANSLATION_CHUNK_SIZE:-400}"
+          if ! [[ "$target" =~ ^[0-9]+$ ]]; then target=2000; fi
+          if ! [[ "$chunk" =~ ^[0-9]+$ ]]; then chunk=400; fi
+          if [ "$target" -lt 1 ]; then target=1; fi
+          if [ "$chunk" -lt 1 ]; then chunk=1; fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          processed=0
+          while [ "$processed" -lt "$target" ]; do
+            current="$chunk"
+            remaining=$((target - processed))
+            if [ "$current" -gt "$remaining" ]; then current="$remaining"; fi
+
+            echo "Translation checkpoint: processing up to $current descriptions ($processed/$target already requested)."
+            TRANSLATION_BATCH_LIMIT="$current" node scripts/translate-descriptions-github-models.js
+
+            git add public/data/manifest.json public/data/translations.json
+            if git diff --cached --quiet; then
+              echo "No translation cache changes to commit."
+              break
+            fi
+
+            git commit -m "chore: update Chinese description translations [skip ci]"
+            git push
+
+            stats="$(node -e "const fs=require('fs'); const m=JSON.parse(fs.readFileSync('public/data/manifest.json','utf8')); const s=(m.sources||[]).find(x=>x.id==='translations')?.state?.detail||{}; console.log([s.acceptedThisRun||0,s.deferredThisRun||0,s.pendingCalibration||0].join(','));")"
+            IFS=',' read -r accepted deferred pending <<< "$stats"
+            echo "Translation checkpoint stats: accepted=$accepted deferred=$deferred pendingCalibration=$pending"
+            if [ "$pending" = "0" ]; then
+              echo "Chinese description calibration is complete."
+              break
+            fi
+            if [ "$accepted" = "0" ] && [ "$deferred" != "0" ]; then
+              echo "Provider deferred the current checkpoint; stopping to preserve credits."
+              break
+            fi
+            processed=$((processed + current))
+          done
 
       - name: Run description translation checks
         run: npm run check:descriptions

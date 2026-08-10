@@ -17,13 +17,14 @@
     "export:static:forced-labor-exemptions": "node scripts/export-static-data.js --scope forcedLaborExemptions",
     "export:static:translations": "node scripts/export-static-data.js --scope translations",
     "translate:descriptions": "node scripts/translate-descriptions-github-models.js",
+    "check:translation-pipeline": "node scripts/translate-descriptions-github-models.js --self-test",
     "check:descriptions": "node scripts/check-description-translations.js",
     "check:search-catalog": "node scripts/check-search-catalog-coverage.js",
     "check:search-ranking": "node scripts/check-search-ranking.js",
     "check:certifications": "node scripts/check-certification-rules.js",
     "check:hts-statistical-notes": "node scripts/check-chapter91-statistical-notes.js",
     "check:policy-sentinel": "node scripts/policy-sentinel-check.js",
-    "check": "npm run check:descriptions && npm run check:search-catalog && npm run check:search-ranking && npm run check:certifications && npm run check:hts-statistical-notes && npm run check:policy-sentinel"
+    "check": "npm run check:translation-pipeline && npm run check:descriptions && npm run check:search-catalog && npm run check:search-ranking && npm run check:certifications && npm run check:hts-statistical-notes && npm run check:policy-sentinel"
   },
   "engines": {
     "node": ">=20"
