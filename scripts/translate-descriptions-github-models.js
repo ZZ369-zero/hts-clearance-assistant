@@ -29,8 +29,10 @@ const qualityCycles = Math.min(3, positiveInteger(process.env.TRANSLATION_QUALIT
 const requestRetries = Math.min(4, positiveInteger(process.env.COPILOT_REQUEST_RETRIES, 3));
 const maxAiCredits = Math.max(30, positiveInteger(process.env.COPILOT_MAX_AI_CREDITS, 30));
 const singleItemFallbackLimit = Math.min(5, positiveInteger(process.env.COPILOT_SINGLE_ITEM_FALLBACK_LIMIT, 0));
+const requestTimeoutMs = Math.max(30000, positiveInteger(process.env.COPILOT_REQUEST_TIMEOUT_MS, 240000));
 const now = new Date().toISOString();
 const execFileAsync = promisify(execFile);
+let copilotRequestSequence = 0;
 
 if (selfTest) {
   runSelfTest();
@@ -89,6 +91,7 @@ console.log(JSON.stringify({
   translationModel,
   reviewModel,
   maxAiCredits,
+  requestTimeoutMs,
   qualityCycles,
   totalDescriptions: descriptions.size,
   publishedDescriptions: Object.keys(values).length,
@@ -113,6 +116,7 @@ let reviewed = 0;
 let qualityRetries = 0;
 for (let offset = 0; offset < pending.length; offset += batchSize) {
   const batch = pending.slice(offset, offset + batchSize);
+  console.log(`Starting batch ${offset / batchSize + 1} with ${batch.length} descriptions.`);
   let result;
   try {
     result = await translateAndReviewBatch(batch);
@@ -242,6 +246,7 @@ async function translateAndReviewBatch(items) {
   let qualityRetries = 0;
 
   for (let cycle = 1; cycle <= qualityCycles && remaining.length; cycle += 1) {
+    console.log(`Quality cycle ${cycle}/${qualityCycles}: translating ${remaining.length} descriptions.`);
     let translations;
     try {
       translations = await translateBatch(remaining, cycle);
@@ -255,6 +260,7 @@ async function translateAndReviewBatch(items) {
         : new Map();
     }
     translated += translations.size;
+    console.log(`Quality cycle ${cycle}/${qualityCycles}: received ${translations.size} translations.`);
 
     const candidates = remaining
       .map((item) => ({
@@ -270,6 +276,7 @@ async function translateAndReviewBatch(items) {
 
     let reviews;
     try {
+      console.log(`Quality cycle ${cycle}/${qualityCycles}: reviewing ${candidates.length} translations.`);
       reviews = await reviewBatch(candidates, cycle);
     } catch (error) {
       if (isProviderUnavailableError(error)) {
@@ -279,6 +286,7 @@ async function translateAndReviewBatch(items) {
       reviews = automaticReviewBatch(candidates);
     }
     reviewed += reviews.size;
+    console.log(`Quality cycle ${cycle}/${qualityCycles}: reviewed ${reviews.size} translations.`);
 
     const retry = [];
     for (const candidate of candidates) {
@@ -336,7 +344,7 @@ async function translateBatch(items, cycle) {
     `INPUT_JSON=${JSON.stringify({ items: numbered })}`
   ].join("\n"), translationModel, (value) =>
     validateExactEntries(value, "translations", numbered.map((item) => item.id), ["zh"])
-  );
+  , `translate cycle ${cycle} (${items.length} items)`);
   const result = new Map();
   for (const entry of parsed.translations || []) {
     const index = Number(entry.id);
@@ -395,7 +403,7 @@ async function reviewBatch(candidates, cycle) {
       }
     }
     return entries;
-  });
+  }, `review cycle ${cycle} (${candidates.length} items)`);
 
   const result = new Map();
   for (const entry of parsed.reviews || []) {
@@ -449,16 +457,21 @@ async function reviewBatchIndividually(candidates, cycle) {
   return result;
 }
 
-async function requestStructuredModel(prompt, modelName, validate) {
+async function requestStructuredModel(prompt, modelName, validate, label = "structured request") {
   let lastError;
   for (let attempt = 1; attempt <= requestRetries; attempt += 1) {
+    const startedAt = Date.now();
+    const requestId = ++copilotRequestSequence;
+    console.log(`Copilot request #${requestId} start: ${label}; attempt ${attempt}/${requestRetries}; model=${modelName || copilotDefaultModel}; timeoutMs=${requestTimeoutMs}`);
     try {
       const response = await invokeCopilot(prompt, modelName);
       const parsed = parseModelJson(response);
       validate(parsed);
+      console.log(`Copilot request #${requestId} ok: ${label}; elapsedMs=${Date.now() - startedAt}`);
       return parsed;
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error));
+      console.warn(`Copilot request #${requestId} failed: ${label}; attempt ${attempt}/${requestRetries}; elapsedMs=${Date.now() - startedAt}; ${lastError.message}`);
       if (isProviderUnavailableError(lastError)) {
         throw lastError;
       }
@@ -488,7 +501,7 @@ async function invokeCopilot(prompt, modelName) {
         COPILOT_GITHUB_TOKEN: token
       },
       maxBuffer: 16 * 1024 * 1024,
-      timeout: 240000,
+      timeout: requestTimeoutMs,
       windowsHide: true
     });
     if (!String(stdout || "").trim()) {
@@ -496,7 +509,13 @@ async function invokeCopilot(prompt, modelName) {
     }
     return String(stdout);
   } catch (error) {
-    const detail = [error?.stderr, error?.stdout, `exit=${error?.code || "unknown"}`]
+    const detail = [
+      error?.stderr,
+      error?.stdout,
+      `exit=${error?.code || "unknown"}`,
+      error?.signal ? `signal=${error.signal}` : "",
+      error?.killed ? "killed=true" : ""
+    ]
       .filter(Boolean)
       .join(" ");
     throw new Error(`Copilot CLI request failed: ${stripAnsi(detail || "unknown error").slice(0, 1000)}`);
