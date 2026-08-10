@@ -259,7 +259,10 @@ async function requestModel(prompt) {
       }
       return String(stdout);
     } catch (error) {
-      const detail = [error?.message, error?.stdout, error?.stderr].filter(Boolean).join(" ");
+      const messageTail = String(error?.message || "").split(/\r?\n/).slice(-4).join(" ");
+      const detail = [error?.stderr, error?.stdout, `exit=${error?.code || "unknown"}`, messageTail]
+        .filter(Boolean)
+        .join(" ");
       lastError = new Error(`Copilot CLI request failed: ${detail.slice(0, 1000)}`);
       if (isProviderUnavailableError(lastError)) {
         throw lastError;
