@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import {
+  getDeterministicDescriptionZh,
   getPreferredDescriptionZh,
   isUsableChineseDescription
 } from "../public/description-helper.js";
@@ -20,6 +21,10 @@ for (const [htsno, description, expected] of knownCases) {
 assert.equal(isUsableChineseDescription("电机及发生器（不包括 generating 套装）"), false);
 assert.equal(isUsableChineseDescription("中文辅助生成中..."), false);
 assert.equal(isUsableChineseDescription("马："), true);
+assert.equal(
+  getDeterministicDescriptionZh({ description: "Dimethyl sulfide (DMS) (CAS No. 75-18-3)" }),
+  "化学品/专用化合物：Dimethyl sulfide (DMS) (CAS号 75-18-3)"
+);
 
 const cache = JSON.parse(await readFile(new URL("../public/data/translations.json", import.meta.url), "utf8"));
 for (const [description, translation] of Object.entries(cache.values || {})) {
@@ -30,6 +35,7 @@ for (const [description, translation] of Object.entries(cache.values || {})) {
   );
   assert.ok(
     ["curated", "github-models", "local-glossary"].includes(cache.methods?.[description])
+      || String(cache.methods?.[description] || "").startsWith("deterministic:")
       || String(cache.methods?.[description] || "").startsWith("copilot-cli:"),
     `Translation cache is missing a valid method: ${description}`
   );
