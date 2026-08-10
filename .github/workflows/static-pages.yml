@@ -198,7 +198,19 @@ jobs:
             fi
 
             git commit -m "chore: update Chinese description translations [skip ci]"
-            git push
+            pushed=0
+            for push_attempt in 1 2 3; do
+              if git push; then
+                pushed=1
+                break
+              fi
+              echo "Translation checkpoint push failed on attempt $push_attempt; rebasing onto latest ${GITHUB_REF_NAME} and retrying."
+              git pull --rebase origin "${GITHUB_REF_NAME}"
+            done
+            if [ "$pushed" != "1" ]; then
+              echo "Unable to push translation checkpoint after retries."
+              exit 1
+            fi
 
             if [ "$pending" = "0" ]; then
               echo "Chinese description calibration is complete."
