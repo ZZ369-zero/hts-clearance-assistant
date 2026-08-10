@@ -26,12 +26,12 @@ on:
       translation_limit:
         description: "Maximum Chinese descriptions to translate in a manual run"
         required: false
-        default: "20"
+        default: "200"
         type: string
       translation_chunk_size:
         description: "Checkpoint size for long Chinese translation runs"
         required: false
-        default: "400"
+        default: "20"
         type: string
       translation_model:
         description: "Copilot CLI model for initial Chinese translations"
@@ -43,6 +43,14 @@ on:
         required: false
         default: "copilot-default"
         type: string
+      auto_continue:
+        description: "Queue another translation run when calibrated descriptions remain"
+        required: false
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
   schedule:
     # HTS / normal duty / Chapter 99: every 1 hour.
     - cron: "7 * * * *"
@@ -61,6 +69,7 @@ on:
 
 permissions:
   contents: write
+  actions: write
   copilot-requests: write
   models: read
   pages: write
@@ -133,11 +142,13 @@ jobs:
           COPILOT_TRANSLATION_MODEL: ${{ github.event_name == 'workflow_dispatch' && inputs.translation_model || 'copilot-default' }}
           COPILOT_REVIEW_MODEL: ${{ github.event_name == 'workflow_dispatch' && inputs.review_model || 'copilot-default' }}
           COPILOT_MAX_AI_CREDITS: "30"
-          TRANSLATION_BATCH_LIMIT: ${{ github.event_name == 'workflow_dispatch' && inputs.translation_limit || '2000' }}
+          TRANSLATION_BATCH_LIMIT: ${{ github.event_name == 'workflow_dispatch' && inputs.translation_limit || '200' }}
           TRANSLATION_BATCH_SIZE: "40"
-          TRANSLATION_CHUNK_SIZE: ${{ github.event_name == 'workflow_dispatch' && inputs.translation_chunk_size || '400' }}
+          TRANSLATION_CHUNK_SIZE: ${{ github.event_name == 'workflow_dispatch' && inputs.translation_chunk_size || '20' }}
           TRANSLATION_QUALITY_CYCLES: "2"
           COPILOT_REQUEST_RETRIES: "3"
+          AUTO_CONTINUE_TRANSLATIONS: ${{ github.event_name == 'workflow_dispatch' && inputs.auto_continue || 'true' }}
+          GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
@@ -191,6 +202,20 @@ jobs:
             fi
             processed=$((processed + current))
           done
+
+          final_stats="$(node -e "const fs=require('fs'); const m=JSON.parse(fs.readFileSync('public/data/manifest.json','utf8')); const s=(m.sources||[]).find(x=>x.id==='translations')?.state?.detail||{}; console.log([s.acceptedThisRun||0,s.pendingCalibration||0].join(','));")"
+          IFS=',' read -r final_accepted final_pending <<< "$final_stats"
+          if [ "${AUTO_CONTINUE_TRANSLATIONS:-true}" = "true" ] && [ "$final_pending" != "0" ] && [ "$final_accepted" != "0" ]; then
+            echo "Queueing continuation run: pendingCalibration=$final_pending"
+            gh workflow run static-pages.yml \
+              --ref "${GITHUB_REF_NAME}" \
+              -f scope=translations \
+              -f translation_limit="$target" \
+              -f translation_chunk_size="$chunk" \
+              -f translation_model="${COPILOT_TRANSLATION_MODEL:-copilot-default}" \
+              -f review_model="${COPILOT_REVIEW_MODEL:-copilot-default}" \
+              -f auto_continue=true
+          fi
 
       - name: Run description translation checks
         run: npm run check:descriptions
