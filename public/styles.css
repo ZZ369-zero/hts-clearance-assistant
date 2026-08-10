@@ -1319,6 +1319,27 @@ tbody tr.selected td:first-child {
   font-size: 12px;
 }
 
+.restriction-exemption-summary {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 12px;
+  border-left: 3px solid #2e7d67;
+  padding: 6px 9px;
+  color: #36544a;
+  background: #edf7f3;
+  font-size: 12px;
+}
+
+.restriction-exemption-summary strong {
+  color: var(--navy);
+}
+
+.restriction-exemption-summary b {
+  margin-left: auto;
+  color: #2e7d67;
+}
+
 .forced-labor-exemption-detail summary {
   cursor: pointer;
   font-weight: 900;
@@ -1495,6 +1516,18 @@ tbody tr.selected td:first-child {
   margin-top: 6px;
   color: #68400b;
   line-height: 1.4;
+}
+
+.additional-duty-item .additional-duty-exemption-basis {
+  margin-top: 8px;
+  border-left: 3px solid #2e7d67;
+  padding: 6px 8px;
+  color: #245e50;
+  background: #edf7f3;
+}
+
+.additional-duty-item .additional-duty-exemption-basis strong {
+  color: #245e50;
 }
 
 .rate-pill {

@@ -35,6 +35,9 @@ export function matchForcedLaborExemptions(hts, snapshot = {}, options = {}) {
   const exactHtsRule = activeRules.find((rule) =>
     rule.matchType === "exact-hts" && (rule.codes || []).some((code) => matchesHts(digits, code))
   );
+  const matchedHts = exactHtsRule
+    ? (exactHtsRule.codes || []).find((code) => matchesHts(digits, code)) || ""
+    : "";
   const overlapMatch = findTradeMeasureOverlap(options.appliedChapter99Rules || []);
   const overlapRule = overlapMatch
     ? activeRules.find((rule) => rule.code === "9903.05.90")
@@ -54,6 +57,7 @@ export function matchForcedLaborExemptions(hts, snapshot = {}, options = {}) {
         status: "active",
         autoExempt: true,
         triggerCode: overlapMatch?.code || "",
+        matchedHts,
         matchedBy: overlapMatch ? `${overlapMatch.label} ${overlapMatch.code}` : "HTS精确排除清单"
       }
     : null;

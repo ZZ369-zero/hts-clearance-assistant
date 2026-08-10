@@ -24,7 +24,7 @@ import {
 } from "./description-helper.js?v=20260804-chapter91-terms-1";
 import {
   matchForcedLaborExemptions
-} from "./forced-labor-exemption-engine.js?v=20260801-trade-overlap-1";
+} from "./forced-labor-exemption-engine.js?v=20260810-forced-labor-display-1";
 import {
   getSelectedVehicleChapter99Rules,
   NON_VEHICLE_DUTY_CHOICE,
@@ -953,9 +953,8 @@ function renderAdditionalCodes(row) {
       .slice(0, 3)
       .map((rule) => {
         if (rule.exempt) {
-          const code = rule.exemptionCode || rule.code || "";
           const rate = rule.rate == null ? "" : ` ${formatRateNumber(rule.rate)}%`;
-          return `<span class="code-tag">${escapeHtml(rule.shortLabel)} ${escapeHtml(code)}${escapeHtml(rate)} 豁免</span>`;
+          return `<span class="code-tag">${escapeHtml(rule.shortLabel)} ${escapeHtml(rule.code || "")}${escapeHtml(rate)} 已豁免</span>`;
         }
         const rate = rule.exemptionStatus === "多选1" ? "多选1" : rule.rate == null ? "需判断" : `+${rule.rate}%`;
         return `<span class="code-tag">${escapeHtml(rule.shortLabel)} ${escapeHtml(rule.code || "")} ${escapeHtml(rate)}</span>`;
@@ -1013,6 +1012,7 @@ function buildAdditionalDutyRules(row, context = {}) {
         : "") || temporary122Choice?.note || temporary122Exemption?.note || catalog.note || "来自 USITC 脚注或常见附加税规则，需复核适用条件。",
       exempt: Boolean(exactForcedLaborExemption || temporary122Exemption),
       exemptionCode: exactForcedLaborExemption?.code || temporary122Exemption?.code || "",
+      exemptionMatchedHts: exactForcedLaborExemption?.matchedHts || "",
       exemptionSourceUrl: exactForcedLaborExemption?.sourceUrl || "",
       possibleExemptions: forcedLaborExemption?.possible || []
     };
@@ -1922,11 +1922,11 @@ function handleManualAssessmentInput(event) {
 }
 
 function renderAdditionalDutyItem(item, parsed, rule, applied) {
-  const displayCode = rule.exempt && rule.exemptionCode ? rule.exemptionCode : item.htsno || rule.code || "Chapter 99";
+  const displayCode = item.htsno || rule.code || "Chapter 99";
   const isSection232ZeroRate = rule.source === "section232" && parsed.auto && parsed.rate === 0;
   const rateLabel = rule.exempt
     ? parsed.auto && parsed.rate > 0
-      ? `${formatRateNumber(parsed.rate)}% 豁免`
+      ? `${formatRateNumber(parsed.rate)}% 已豁免`
       : "豁免"
     : parsed.auto && parsed.rate > 0
     ? `+${parsed.rate}%`
@@ -1935,12 +1935,16 @@ function renderAdditionalDutyItem(item, parsed, rule, applied) {
     : "需人工确认";
   const applyLabel = rule.exempt ? "豁免，未计入估算" : applied ? "已计入估算" : "未自动计入";
   const englishLine = rule.summaryZh ? "" : `<p class="en-line">${escapeHtml(item.description || "--")}</p>`;
+  const exemptionBasis = rule.exempt && rule.exemptionCode
+    ? `<small class="additional-duty-exemption-basis"><strong>排除依据：</strong>${escapeHtml(rule.exemptionCode)}${rule.exemptionMatchedHts ? ` · 命中 HTS ${escapeHtml(rule.exemptionMatchedHts)}` : ""}</small>`
+    : "";
   return `
     <div class="additional-duty-item ${applied ? "applied" : "not-applied"}">
       <div>
         <strong>${escapeHtml(rule.label)} <span>${escapeHtml(displayCode)}</span></strong>
         <p class="zh-line">${escapeHtml(rule.summaryZh || item.descriptionZh || item.description || "暂无中文释义")}</p>
         ${englishLine}
+        ${exemptionBasis}
         <small>General: ${escapeHtml(item.general || "--")}</small>
         <small>${escapeHtml(rule.note)} ${escapeHtml(applyLabel)}</small>
       </div>
@@ -1951,12 +1955,12 @@ function renderAdditionalDutyItem(item, parsed, rule, applied) {
 
 function renderRestrictionItem(item, parsed, rule, applied) {
   const isSection232Miss = rule.source === "section232" && !/^99\d{2}\.\d{2}\.\d{2}$/.test(rule.code || "");
-  const displayCode = rule.exempt && rule.exemptionCode ? rule.exemptionCode : item.htsno || rule.code || "Chapter 99";
+  const displayCode = item.htsno || rule.code || "Chapter 99";
   const code = isSection232Miss ? "未命中" : compactChapter99Code(displayCode);
   const isSection232ZeroRate = rule.source === "section232" && parsed.auto && parsed.rate === 0;
   const rateLabel = rule.exempt
     ? parsed.auto && parsed.rate > 0
-      ? `${formatRateNumber(parsed.rate)}% 不计入`
+      ? `${formatRateNumber(parsed.rate)}%`
       : "豁免"
     : isSection232Miss
     ? "不适用"
@@ -1970,7 +1974,7 @@ function renderRestrictionItem(item, parsed, rule, applied) {
   const status = rule.exempt
     ? choiceSelected
       ? "已选择·另有排除"
-      : "条件排除"
+      : "已豁免"
     : isChoiceOption
     ? choiceSelected && applied
       ? "当前计入"
@@ -1983,6 +1987,15 @@ function renderRestrictionItem(item, parsed, rule, applied) {
     ? `<em class="material-badge">${escapeHtml(rule.material.shortLabel)}</em>`
     : "";
   const exemptionDetails = renderForcedLaborExemptionDetails(rule);
+  const exemptionSummary = rule.exempt && rule.exemptionCode
+    ? `
+      <div class="restriction-exemption-summary">
+        <span><strong>排除依据</strong> ${escapeHtml(compactChapter99Code(rule.exemptionCode))}</span>
+        ${rule.exemptionMatchedHts ? `<span><strong>命中 HTS</strong> ${escapeHtml(rule.exemptionMatchedHts)}</span>` : ""}
+        <b>本项不计入</b>
+      </div>
+    `
+    : "";
   const choiceControl = isChoiceOption
     ? `<input class="restriction-choice-radio" type="radio" name="vehicle-remedy-choice" value="${escapeHtml(rule.choiceValue || rule.code || "")}" data-vehicle-duty-choice ${choiceSelected ? "checked" : ""} aria-label="选择${escapeHtml(rule.label || "该税项")}">`
     : "";
@@ -1991,7 +2004,7 @@ function renderRestrictionItem(item, parsed, rule, applied) {
     <div class="restriction-item ${applied ? "applied" : "not-applied"}${isChoiceOption ? " choice-option" : ""}">
       ${choiceControl}
       <div class="restriction-main">
-        <strong>${escapeHtml(rule.label)}:</strong>
+        <strong>${escapeHtml(rule.label)}${rule.exempt ? "（征税依据）" : ""}:</strong>
         ${materialBadge}
         <span>${escapeHtml(code)}</span>
         <b>${escapeHtml(rateLabel)}</b>
@@ -2000,6 +2013,7 @@ function renderRestrictionItem(item, parsed, rule, applied) {
         <span>${escapeHtml(status)}</span>
         <button class="help-dot" type="button" title="${escapeHtml(title)}" aria-label="${escapeHtml(title)}">?</button>
       </div>
+      ${exemptionSummary}
       ${exemptionDetails}
     </div>
   `;
@@ -2083,7 +2097,7 @@ function renderForcedLaborExemptionDetails(rule) {
   }
 
   const heading = rule.exempt
-    ? `${rule.exemptionCode} 已自动排除本项12.5%`
+    ? `${rule.exemptionCode} 排除条款详情`
     : `${possible.length} 项可能排除规则待核`;
   const exactItem = rule.exempt
     ? `

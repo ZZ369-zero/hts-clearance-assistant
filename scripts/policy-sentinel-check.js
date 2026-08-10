@@ -150,8 +150,12 @@ function checkForcedLaborExemptions(snapshot) {
 
   record(
     "8524911000 automatically resolves to 9903.05.86 exclusion",
-    Boolean(match.exact?.code === "9903.05.86" && match.exact.autoExempt),
-    `exact=${match.exact?.code || "none"}; possible=${match.possible.map((item) => item.code).join(",") || "none"}`
+    Boolean(
+      match.exact?.code === "9903.05.86"
+      && match.exact.autoExempt
+      && match.exact.matchedHts === "8524.91.10"
+    ),
+    `exact=${match.exact?.code || "none"}; matchedHts=${match.exact?.matchedHts || "none"}; possible=${match.possible.map((item) => item.code).join(",") || "none"}`
   );
   record(
     "9903.05.85 keeps real July 28 expiry and is archived",
