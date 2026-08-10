@@ -165,6 +165,7 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
           processed=0
+          run_accepted_total=0
           while [ "$processed" -lt "$target" ]; do
             current="$chunk"
             remaining=$((target - processed))
@@ -181,6 +182,9 @@ jobs:
             stats="$(node -e "const fs=require('fs'); const m=JSON.parse(fs.readFileSync('public/data/manifest.json','utf8')); const s=(m.sources||[]).find(x=>x.id==='translations')?.state?.detail||{}; console.log([s.acceptedThisRun||0,s.deferredThisRun||0,s.pendingCalibration||0].join(','));")"
             IFS=',' read -r accepted deferred pending <<< "$stats"
             echo "Translation checkpoint stats: accepted=$accepted deferred=$deferred pendingCalibration=$pending"
+            if [[ "$accepted" =~ ^[0-9]+$ ]]; then
+              run_accepted_total=$((run_accepted_total + accepted))
+            fi
             if [ "$accepted" = "0" ]; then
               echo "No accepted translations in this checkpoint; stopping without committing attempt-only data."
               git restore -- public/data/manifest.json public/data/translations.json
@@ -205,8 +209,8 @@ jobs:
 
           final_stats="$(node -e "const fs=require('fs'); const m=JSON.parse(fs.readFileSync('public/data/manifest.json','utf8')); const s=(m.sources||[]).find(x=>x.id==='translations')?.state?.detail||{}; console.log([s.acceptedThisRun||0,s.pendingCalibration||0].join(','));")"
           IFS=',' read -r final_accepted final_pending <<< "$final_stats"
-          if [ "${AUTO_CONTINUE_TRANSLATIONS:-true}" = "true" ] && [ "$final_pending" != "0" ] && [ "$final_accepted" != "0" ]; then
-            echo "Queueing continuation run: pendingCalibration=$final_pending"
+          if [ "${AUTO_CONTINUE_TRANSLATIONS:-true}" = "true" ] && [ "$final_pending" != "0" ] && [ "$run_accepted_total" != "0" ]; then
+            echo "Queueing continuation run: pendingCalibration=$final_pending; acceptedThisRun=$run_accepted_total"
             gh workflow run static-pages.yml \
               --ref "${GITHUB_REF_NAME}" \
               -f scope=translations \

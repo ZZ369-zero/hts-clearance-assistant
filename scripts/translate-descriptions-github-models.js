@@ -365,14 +365,23 @@ async function translateBatch(items, cycle) {
     "Return JSON only as {\"translations\":[{\"id\":\"0\",\"zh\":\"...\"}]} with exactly one result for every input id.",
     `INPUT_JSON=${JSON.stringify({ items: numbered })}`
   ].join("\n"), translationModel, (value) =>
-    validateExactEntries(value, "translations", numbered.map((item) => item.id), ["zh"])
+    validateEntryArray(value, "translations")
   , `translate cycle ${cycle} (${items.length} items)`);
   const result = new Map();
+  const expected = new Set(numbered.map((item) => item.id));
+  let ignored = 0;
   for (const entry of parsed.translations || []) {
-    const index = Number(entry.id);
-    if (Number.isInteger(index) && items[index]) {
-      result.set(items[index].description, String(entry.zh || "").trim());
+    const id = normalizeModelId(entry?.id);
+    const index = Number(id);
+    const zh = String(entry?.zh || entry?.translation || entry?.chinese || entry?.zhCn || "").trim();
+    if (Number.isInteger(index) && expected.has(id) && items[index] && zh) {
+      result.set(items[index].description, zh);
+    } else {
+      ignored += 1;
     }
+  }
+  if (ignored) {
+    console.warn(`Ignored ${ignored} malformed translation entr${ignored === 1 ? "y" : "ies"} in cycle ${cycle}.`);
   }
   return result;
 }
@@ -415,28 +424,31 @@ async function reviewBatch(candidates, cycle) {
     `This is quality cycle ${cycle} of ${qualityCycles}.`,
     `INPUT_JSON=${JSON.stringify({ items: numbered })}`
   ].join("\n"), reviewModel, (value) => {
-    const entries = validateExactEntries(value, "reviews", numbered.map((item) => item.id), ["zh"]);
-    for (const entry of entries) {
-      if (typeof entry.approved !== "boolean") {
-        throw new Error(`Review entry ${entry.id} is missing boolean approved.`);
-      }
-      if (entry.issues !== undefined && !Array.isArray(entry.issues)) {
-        throw new Error(`Review entry ${entry.id} has non-array issues.`);
-      }
-    }
-    return entries;
+    return validateEntryArray(value, "reviews");
   }, `review cycle ${cycle} (${candidates.length} items)`);
 
   const result = new Map();
+  const expected = new Set(numbered.map((item) => item.id));
+  let ignored = 0;
   for (const entry of parsed.reviews || []) {
-    const index = Number(entry.id);
-    if (Number.isInteger(index) && candidates[index]) {
+    const id = normalizeModelId(entry?.id);
+    const index = Number(id);
+    const zh = String(entry?.zh || entry?.correctedZh || entry?.translation || entry?.chinese || "").trim();
+    if (Number.isInteger(index) && expected.has(id) && candidates[index] && zh) {
+      const issues = Array.isArray(entry.issues) ? entry.issues : [];
       result.set(candidates[index].item.description, {
-        approved: entry.approved === true,
-        zh: String(entry.zh || "").trim(),
-        issues: Array.isArray(entry.issues) ? entry.issues : []
+        approved: typeof entry.approved === "boolean"
+          ? entry.approved
+          : passesAutomaticChecks(candidates[index].item.description, zh),
+        zh,
+        issues
       });
+    } else {
+      ignored += 1;
     }
+  }
+  if (ignored) {
+    console.warn(`Ignored ${ignored} malformed review entr${ignored === 1 ? "y" : "ies"} in cycle ${cycle}.`);
   }
   return result;
 }
@@ -625,6 +637,20 @@ function validateExactEntries(parsed, key, expectedIds, requiredStringFields = [
     throw new Error(`Model response is missing ids: ${missing.join(",")}.`);
   }
   return entries;
+}
+
+function validateEntryArray(parsed, key) {
+  const entries = parsed?.[key];
+  if (!Array.isArray(entries)) {
+    throw new Error(`Model response is missing ${key} array.`);
+  }
+  return entries;
+}
+
+function normalizeModelId(value) {
+  return String(value ?? "")
+    .trim()
+    .replace(/^["'#\s]+|["'\s]+$/g, "");
 }
 
 function stripAnsi(value) {
