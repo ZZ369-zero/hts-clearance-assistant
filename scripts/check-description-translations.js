@@ -29,7 +29,8 @@ for (const [description, translation] of Object.entries(cache.values || {})) {
     `Translation cache contains an unverified value: ${description} -> ${translation}`
   );
   assert.ok(
-    ["curated", "github-models", "local-glossary"].includes(cache.methods?.[description]),
+    ["curated", "github-models", "local-glossary"].includes(cache.methods?.[description])
+      || String(cache.methods?.[description] || "").startsWith("copilot-cli:"),
     `Translation cache is missing a valid method: ${description}`
   );
 }

@@ -66,7 +66,7 @@ const syncSourceConfig = {
   },
   translations: {
     ids: ["translations"],
-    minutes: 10080
+    minutes: 1440
   }
 };
 
@@ -83,7 +83,7 @@ const sourceLabels = {
   adcvdLocal: ["AD/CVD HTS match dataset", "Local AD/CVD data snapshot", "HTS match snapshot used by the static site.", "https://access.trade.gov/adcvd"],
   epaFlags: ["EPA ACE EP3/EP5 HTS flags", "EPA / CustomsInfo public OGA lists", "EPA EP3 vehicle/engine and EP5 pesticide/device exact HTS filing prompts.", "https://www.epa.gov/importing-exporting"],
   fdaFlags: ["FDA FD1-FD4 HTS flags", "FDA / CustomsInfo public OGA lists", "FDA flag meanings and exact HTS code lists used for FD1-FD4 entry prompts.", "https://www.fda.gov/industry/import-basics/harmonized-tariff-schedule-and-fd-flags"],
-  translations: ["商品中文描述缓存", "构建期校核缓存", "发布前整理并校验的双语商品描述；访客浏览时不再逐条等待在线翻译。", ""]
+  translations: ["商品中文描述缓存", "GitHub Copilot 强模型 + HTS术语校准", "强模型翻译并通过数字、范围与法律限定词校验的双语商品描述；访客浏览时不再逐条等待在线翻译。", ""]
 };
 
 main().catch((error) => {
@@ -631,7 +631,9 @@ async function exportTranslations(manifest) {
     }
   }
   const calibratedDescriptions = Object.values(methods)
-    .filter((method) => method === "curated" || method === "github-models").length;
+    .filter((method) => method === "curated"
+      || method === "github-models"
+      || String(method || "").startsWith("copilot-cli:")).length;
   const attempts = Object.fromEntries(
     Object.entries(old.attempts || {})
       .filter(([description, count]) => descriptions.has(description) && Number(count) > 0)
