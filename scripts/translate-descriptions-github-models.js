@@ -28,6 +28,7 @@ const batchSize = Math.min(40, positiveInteger(process.env.TRANSLATION_BATCH_SIZ
 const qualityCycles = Math.min(3, positiveInteger(process.env.TRANSLATION_QUALITY_CYCLES, 2));
 const requestRetries = Math.min(4, positiveInteger(process.env.COPILOT_REQUEST_RETRIES, 3));
 const maxAiCredits = Math.max(30, positiveInteger(process.env.COPILOT_MAX_AI_CREDITS, 30));
+const singleItemFallbackLimit = Math.min(5, positiveInteger(process.env.COPILOT_SINGLE_ITEM_FALLBACK_LIMIT, 0));
 const now = new Date().toISOString();
 const execFileAsync = promisify(execFile);
 
@@ -170,7 +171,7 @@ const calibratedDescriptions = Object.values(sortedMethods).filter(isCalibratedM
 const updatedCache = {
   ...cache,
   generatedAt: now,
-  reviewMethod: "GitHub Copilot strong-model translation + independent strong-model review + HTS terminology, legal-boundary and numeric consistency checks",
+  reviewMethod: "GitHub Copilot strong-model translation + independent review when structured + HTS terminology, legal-boundary and numeric consistency checks",
   coverage: {
     totalRows: rows.length,
     coveredRows,
@@ -200,7 +201,7 @@ const translationSource = (manifest.sources || []).find((source) => source.id ==
 if (translationSource) {
   translationSource.name = "商品中文描述缓存";
   translationSource.sourceName = "GitHub Copilot 双强模型自动校准";
-  translationSource.description = "强模型翻译、独立强模型复核，并通过数字、范围、术语与法律限定词质量校验的商品描述静态缓存。";
+  translationSource.description = "强模型翻译、结构化复核可用时独立复核，并通过数字、范围、术语与法律限定词质量校验的商品描述静态缓存。";
   translationSource.state = {
     ...(translationSource.state || {}),
     status: rejected || deferred ? "warning" : "ok",
@@ -249,7 +250,9 @@ async function translateAndReviewBatch(items) {
         throw error;
       }
       console.warn(`Translation batch JSON fallback on cycle ${cycle}: ${error.message}`);
-      translations = await translateBatchIndividually(remaining, cycle);
+      translations = singleItemFallbackLimit
+        ? await translateBatchIndividually(remaining.slice(0, singleItemFallbackLimit), cycle)
+        : new Map();
     }
     translated += translations.size;
 
@@ -273,7 +276,7 @@ async function translateAndReviewBatch(items) {
         throw error;
       }
       console.warn(`Review batch JSON fallback on cycle ${cycle}: ${error.message}`);
-      reviews = await reviewBatchIndividually(candidates, cycle);
+      reviews = automaticReviewBatch(candidates);
     }
     reviewed += reviews.size;
 
@@ -404,6 +407,18 @@ async function reviewBatch(candidates, cycle) {
         issues: Array.isArray(entry.issues) ? entry.issues : []
       });
     }
+  }
+  return result;
+}
+
+function automaticReviewBatch(candidates) {
+  const result = new Map();
+  for (const candidate of candidates) {
+    result.set(candidate.item.description, {
+      approved: passesAutomaticChecks(candidate.item.description, candidate.zh),
+      zh: candidate.zh,
+      issues: ["review-json-fallback"]
+    });
   }
   return result;
 }
