@@ -241,7 +241,16 @@ async function translateAndReviewBatch(items) {
   let qualityRetries = 0;
 
   for (let cycle = 1; cycle <= qualityCycles && remaining.length; cycle += 1) {
-    const translations = await translateBatch(remaining, cycle);
+    let translations;
+    try {
+      translations = await translateBatch(remaining, cycle);
+    } catch (error) {
+      if (isProviderUnavailableError(error)) {
+        throw error;
+      }
+      console.warn(`Translation batch JSON fallback on cycle ${cycle}: ${error.message}`);
+      translations = await translateBatchIndividually(remaining, cycle);
+    }
     translated += translations.size;
 
     const candidates = remaining
@@ -256,7 +265,16 @@ async function translateAndReviewBatch(items) {
       continue;
     }
 
-    const reviews = await reviewBatch(candidates, cycle);
+    let reviews;
+    try {
+      reviews = await reviewBatch(candidates, cycle);
+    } catch (error) {
+      if (isProviderUnavailableError(error)) {
+        throw error;
+      }
+      console.warn(`Review batch JSON fallback on cycle ${cycle}: ${error.message}`);
+      reviews = await reviewBatchIndividually(candidates, cycle);
+    }
     reviewed += reviews.size;
 
     const retry = [];
@@ -326,6 +344,25 @@ async function translateBatch(items, cycle) {
   return result;
 }
 
+async function translateBatchIndividually(items, cycle) {
+  const result = new Map();
+  for (const item of items) {
+    try {
+      const single = await translateBatch([item], cycle);
+      const translation = single.get(item.description);
+      if (translation) {
+        result.set(item.description, translation);
+      }
+    } catch (error) {
+      if (isProviderUnavailableError(error)) {
+        throw error;
+      }
+      console.warn(`Single translation skipped for ${item.htsno || "unknown HTS"}: ${error.message}`);
+    }
+  }
+  return result;
+}
+
 async function reviewBatch(candidates, cycle) {
   const numbered = candidates.map((candidate, index) => ({
     id: String(index),
@@ -367,6 +404,32 @@ async function reviewBatch(candidates, cycle) {
         issues: Array.isArray(entry.issues) ? entry.issues : []
       });
     }
+  }
+  return result;
+}
+
+async function reviewBatchIndividually(candidates, cycle) {
+  const result = new Map();
+  for (const candidate of candidates) {
+    try {
+      const single = await reviewBatch([candidate], cycle);
+      const review = single.get(candidate.item.description);
+      if (review) {
+        result.set(candidate.item.description, review);
+        continue;
+      }
+    } catch (error) {
+      if (isProviderUnavailableError(error)) {
+        throw error;
+      }
+      console.warn(`Single review fell back to automatic checks for ${candidate.item.htsno || "unknown HTS"}: ${error.message}`);
+    }
+
+    result.set(candidate.item.description, {
+      approved: passesAutomaticChecks(candidate.item.description, candidate.zh),
+      zh: candidate.zh,
+      issues: ["review-json-fallback"]
+    });
   }
   return result;
 }
