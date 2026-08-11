@@ -26,12 +26,12 @@ on:
       translation_limit:
         description: "Maximum Chinese descriptions to translate in a manual run"
         required: false
-        default: "200"
+        default: "600"
         type: string
       translation_chunk_size:
         description: "Checkpoint size for long Chinese translation runs"
         required: false
-        default: "20"
+        default: "60"
         type: string
       translation_model:
         description: "Copilot CLI model for initial Chinese translations"
@@ -69,8 +69,8 @@ on:
     - cron: "47 2 * * *"
     # Cotton Import Assessment: every 24 hours.
     - cron: "37 3 * * *"
-    # Chinese description cache: daily until full coverage, then incremental.
-    - cron: "47 4 * * *"
+    # Chinese description cache: four times per day until full coverage, then incremental.
+    - cron: "47 */6 * * *"
 
 permissions:
   contents: write
@@ -124,7 +124,7 @@ jobs:
               "27 2 * * *") scope="adcvd" ;;
               "47 2 * * *") scope="epaFlags,fdaFlags" ;;
               "37 3 * * *") scope="cotton" ;;
-              "47 4 * * *") scope="translations" ;;
+              "47 */6 * * *") scope="translations" ;;
               *) scope="all" ;;
             esac
           else
@@ -146,13 +146,14 @@ jobs:
           COPILOT_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           COPILOT_TRANSLATION_MODEL: ${{ github.event_name == 'workflow_dispatch' && inputs.translation_model || 'copilot-default' }}
           COPILOT_REVIEW_MODEL: ${{ github.event_name == 'workflow_dispatch' && inputs.review_model || 'copilot-default' }}
-          COPILOT_MAX_AI_CREDITS: "30"
-          TRANSLATION_BATCH_LIMIT: ${{ github.event_name == 'workflow_dispatch' && inputs.translation_limit || '200' }}
+          COPILOT_MAX_AI_CREDITS: "60"
+          TRANSLATION_BATCH_LIMIT: ${{ github.event_name == 'workflow_dispatch' && inputs.translation_limit || '600' }}
           TRANSLATION_BATCH_SIZE: "40"
-          TRANSLATION_CHUNK_SIZE: ${{ github.event_name == 'workflow_dispatch' && inputs.translation_chunk_size || '20' }}
+          TRANSLATION_CHUNK_SIZE: ${{ github.event_name == 'workflow_dispatch' && inputs.translation_chunk_size || '60' }}
+          TRANSLATION_RUNS_PER_DAY: "4"
           TRANSLATION_QUALITY_CYCLES: "2"
           COPILOT_REQUEST_RETRIES: "3"
-          AUTO_CONTINUE_TRANSLATIONS: ${{ github.event_name == 'workflow_dispatch' && inputs.auto_continue || 'true' }}
+          AUTO_CONTINUE_TRANSLATIONS: ${{ github.event_name == 'workflow_dispatch' && inputs.auto_continue || 'false' }}
           PROVIDER_RETRY_COUNT: ${{ github.event_name == 'workflow_dispatch' && inputs.provider_retry_count || '0' }}
           PROVIDER_RETRY_LIMIT: "12"
           PROVIDER_RETRY_DELAY_SECONDS: "600"

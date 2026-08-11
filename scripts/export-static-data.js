@@ -68,7 +68,7 @@ const syncSourceConfig = {
   },
   translations: {
     ids: ["translations"],
-    minutes: 1440
+    minutes: 360
   }
 };
 
@@ -849,17 +849,26 @@ async function exportTranslations(manifest) {
       .filter(([description, count]) => descriptions.has(description) && Number(count) > 0)
   );
 
+  const baseCoverage = {
+    totalRows: rows.length,
+    coveredRows,
+    totalDescriptions: descriptions.size,
+    cachedDescriptions: Object.keys(values).length,
+    pendingDescriptions: Math.max(0, descriptions.size - Object.keys(values).length),
+    calibratedDescriptions,
+    pendingCalibration: Math.max(0, descriptions.size - calibratedDescriptions)
+  };
+  const existingTranslationDetail = (manifest.sources || []).find((source) => source.id === "translations")?.state?.detail || {};
+  const progressDetail = preserveTranslationProgress({
+    ...existingTranslationDetail,
+    ...(old.coverage || {})
+  }, baseCoverage);
   const data = {
     generatedAt: now,
     sourceGeneratedAt: index.generatedAt || "",
     coverage: {
-      totalRows: rows.length,
-      coveredRows,
-      totalDescriptions: descriptions.size,
-      cachedDescriptions: Object.keys(values).length,
-      pendingDescriptions: Math.max(0, descriptions.size - Object.keys(values).length),
-      calibratedDescriptions,
-      pendingCalibration: Math.max(0, descriptions.size - calibratedDescriptions)
+      ...baseCoverage,
+      ...progressDetail
     },
     values,
     methods,
@@ -874,6 +883,7 @@ async function exportTranslations(manifest) {
     pendingDescriptions: data.coverage.pendingDescriptions,
     calibratedDescriptions,
     pendingCalibration: data.coverage.pendingCalibration,
+    ...progressDetail,
     fetchedAt: now
   });
 }
@@ -984,6 +994,69 @@ function countForSource(id, counts) {
 
 function sourceOrder(id) {
   return ["htsStatus", "chapter99", "chinaTariffs301", "policyRules", "forcedLabor301", "forcedLaborExemptions", "section122", "section232", "cotton", "adcvdOfficial", "adcvdLocal", "epaFlags", "fdaFlags", "translations"].indexOf(id);
+}
+
+function preserveTranslationProgress(previousCoverage, currentCoverage) {
+  const preservedKeys = [
+    "cachedBeforeRun",
+    "calibratedBeforeRun",
+    "acceptedThisRun",
+    "rejectedThisRun",
+    "deferredThisRun",
+    "failedThisRun",
+    "newTranslationsThisRun",
+    "newCalibrationsThisRun",
+    "deterministicAcceptedThisRun",
+    "deterministicNewThisRun",
+    "selectedForThisRun",
+    "translatedThisRun",
+    "reviewedThisRun",
+    "qualityRetriesThisRun",
+    "translationRunsPerDay"
+  ];
+  const detail = {};
+  for (const key of preservedKeys) {
+    if (previousCoverage?.[key] != null) {
+      detail[key] = previousCoverage[key];
+    }
+  }
+  detail.translationRunsPerDay = Number(detail.translationRunsPerDay || 4);
+  detail.failedThisRun = Number(detail.failedThisRun ?? (Number(detail.rejectedThisRun || 0) + Number(detail.deferredThisRun || 0)));
+  if (detail.newTranslationsThisRun == null && detail.acceptedThisRun != null) {
+    detail.newTranslationsThisRun = Number(detail.acceptedThisRun || 0);
+  }
+  const progress = Number(detail.newCalibrationsThisRun || detail.acceptedThisRun || 0);
+  return {
+    ...detail,
+    ...estimateTranslationCompletion(currentCoverage.pendingCalibration, progress, detail.translationRunsPerDay)
+  };
+}
+
+function estimateTranslationCompletion(pendingCalibration, progressThisRun, runsPerDay) {
+  const remaining = Number(pendingCalibration || 0);
+  const progress = Number(progressThisRun || 0);
+  const dailyRuns = Math.max(1, Number(runsPerDay || 1));
+  if (remaining <= 0) {
+    return {
+      estimatedCompletionRuns: 0,
+      estimatedCompletionDays: 0,
+      estimatedCompletionAt: now
+    };
+  }
+  if (progress <= 0) {
+    return {
+      estimatedCompletionRuns: null,
+      estimatedCompletionDays: null,
+      estimatedCompletionAt: ""
+    };
+  }
+  const runs = Math.ceil(remaining / progress);
+  const days = runs / dailyRuns;
+  return {
+    estimatedCompletionRuns: runs,
+    estimatedCompletionDays: Math.round(days * 10) / 10,
+    estimatedCompletionAt: new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString()
+  };
 }
 
 async function startServer() {

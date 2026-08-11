@@ -30,6 +30,7 @@ const batchSize = Math.min(40, positiveInteger(process.env.TRANSLATION_BATCH_SIZ
 const qualityCycles = Math.min(3, positiveInteger(process.env.TRANSLATION_QUALITY_CYCLES, 2));
 const requestRetries = Math.min(4, positiveInteger(process.env.COPILOT_REQUEST_RETRIES, 3));
 const maxAiCredits = Math.max(30, positiveInteger(process.env.COPILOT_MAX_AI_CREDITS, 30));
+const translationRunsPerDay = positiveInteger(process.env.TRANSLATION_RUNS_PER_DAY, 4);
 const singleItemFallbackLimit = Math.min(5, positiveInteger(process.env.COPILOT_SINGLE_ITEM_FALLBACK_LIMIT, 0));
 const requestTimeoutMs = Math.max(30000, positiveInteger(process.env.COPILOT_REQUEST_TIMEOUT_MS, 240000));
 const now = new Date().toISOString();
@@ -81,8 +82,11 @@ const attempts = Object.fromEntries(
   Object.entries(cache.attempts || {})
     .filter(([description, count]) => descriptions.has(description) && Number(count) > 0)
 );
+const cachedBeforeRun = Object.keys(values).length;
+const calibratedBeforeRun = Object.values(methods).filter(isCalibratedMethod).length;
 
 let deterministicAccepted = 0;
+let deterministicNew = 0;
 for (const item of descriptions.values()) {
   if (isCalibratedMethod(methods[item.description])) {
     continue;
@@ -90,6 +94,9 @@ for (const item of descriptions.values()) {
   const exact = getExactDescriptionZh(item);
   const deterministic = exact || getDeterministicDescriptionZh(item);
   if (deterministic && isUsableChineseDescription(deterministic)) {
+    if (!isUsableChineseDescription(values[item.description])) {
+      deterministicNew += 1;
+    }
     values[item.description] = deterministic;
     methods[item.description] = exact ? "curated" : "deterministic:chemical-structured";
     delete attempts[item.description];
@@ -198,21 +205,24 @@ const updatedCache = {
   ...cache,
   generatedAt: now,
   reviewMethod: "GitHub Copilot strong-model translation + independent review when structured + HTS terminology, legal-boundary and numeric consistency checks",
-  coverage: {
+  coverage: buildCoverageSnapshot({
     totalRows: rows.length,
     coveredRows,
     totalDescriptions: descriptions.size,
     cachedDescriptions: Object.keys(sortedValues).length,
-    pendingDescriptions: Math.max(0, descriptions.size - Object.keys(sortedValues).length),
     calibratedDescriptions,
-    pendingCalibration: Math.max(0, descriptions.size - calibratedDescriptions),
-    acceptedThisRun: accepted,
-    rejectedThisRun: rejected,
-    deferredThisRun: deferred,
-    translatedThisRun: translated,
-    reviewedThisRun: reviewed,
-    qualityRetriesThisRun: qualityRetries
-  },
+    cachedBeforeRun,
+    calibratedBeforeRun,
+    accepted,
+    rejected,
+    deferred,
+    translated,
+    reviewed,
+    qualityRetries,
+    deterministicAccepted,
+    deterministicNew,
+    selectedForThisRun: pending.length
+  }),
   values: sortedValues,
   methods: sortedMethods,
   attempts: sortedAttempts
@@ -241,14 +251,24 @@ if (translationSource) {
       count: Object.keys(sortedValues).length,
       totalDescriptions: descriptions.size,
       pendingDescriptions: updatedCache.coverage.pendingDescriptions,
+      cachedBeforeRun,
+      calibratedBeforeRun,
       calibratedDescriptions,
       pendingCalibration: updatedCache.coverage.pendingCalibration,
       acceptedThisRun: accepted,
       rejectedThisRun: rejected,
       deferredThisRun: deferred,
+      failedThisRun: updatedCache.coverage.failedThisRun,
+      newTranslationsThisRun: updatedCache.coverage.newTranslationsThisRun,
+      newCalibrationsThisRun: updatedCache.coverage.newCalibrationsThisRun,
+      selectedForThisRun: pending.length,
       translatedThisRun: translated,
       reviewedThisRun: reviewed,
       qualityRetriesThisRun: qualityRetries,
+      translationRunsPerDay,
+      estimatedCompletionRuns: updatedCache.coverage.estimatedCompletionRuns,
+      estimatedCompletionDays: updatedCache.coverage.estimatedCompletionDays,
+      estimatedCompletionAt: updatedCache.coverage.estimatedCompletionAt,
       provider,
       translationModel,
       reviewModel,
@@ -775,6 +795,74 @@ function isProviderUnavailableError(error) {
 function positiveInteger(value, fallback) {
   const parsed = Number.parseInt(value || "", 10);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function buildCoverageSnapshot(stats) {
+  const cachedDescriptions = Number(stats.cachedDescriptions || 0);
+  const calibratedDescriptions = Number(stats.calibratedDescriptions || 0);
+  const totalDescriptions = Number(stats.totalDescriptions || 0);
+  const pendingCalibration = Math.max(0, totalDescriptions - calibratedDescriptions);
+  const newTranslationsThisRun = Math.max(0, cachedDescriptions - Number(stats.cachedBeforeRun || 0));
+  const newCalibrationsThisRun = Math.max(0, calibratedDescriptions - Number(stats.calibratedBeforeRun || 0));
+  const failedThisRun = Number(stats.rejected || 0) + Number(stats.deferred || 0);
+  const estimate = estimateTranslationCompletion(
+    pendingCalibration,
+    newCalibrationsThisRun || Number(stats.accepted || 0),
+    translationRunsPerDay
+  );
+
+  return {
+    totalRows: Number(stats.totalRows || 0),
+    coveredRows: Number(stats.coveredRows || 0),
+    totalDescriptions,
+    cachedDescriptions,
+    pendingDescriptions: Math.max(0, totalDescriptions - cachedDescriptions),
+    calibratedDescriptions,
+    pendingCalibration,
+    cachedBeforeRun: Number(stats.cachedBeforeRun || 0),
+    calibratedBeforeRun: Number(stats.calibratedBeforeRun || 0),
+    acceptedThisRun: Number(stats.accepted || 0),
+    rejectedThisRun: Number(stats.rejected || 0),
+    deferredThisRun: Number(stats.deferred || 0),
+    failedThisRun,
+    newTranslationsThisRun,
+    newCalibrationsThisRun,
+    deterministicAcceptedThisRun: Number(stats.deterministicAccepted || 0),
+    deterministicNewThisRun: Number(stats.deterministicNew || 0),
+    selectedForThisRun: Number(stats.selectedForThisRun || 0),
+    translatedThisRun: Number(stats.translated || 0),
+    reviewedThisRun: Number(stats.reviewed || 0),
+    qualityRetriesThisRun: Number(stats.qualityRetries || 0),
+    translationRunsPerDay,
+    ...estimate
+  };
+}
+
+function estimateTranslationCompletion(pendingCalibration, progressThisRun, runsPerDay) {
+  const remaining = Number(pendingCalibration || 0);
+  const progress = Number(progressThisRun || 0);
+  const dailyRuns = Math.max(1, Number(runsPerDay || 1));
+  if (remaining <= 0) {
+    return {
+      estimatedCompletionRuns: 0,
+      estimatedCompletionDays: 0,
+      estimatedCompletionAt: now
+    };
+  }
+  if (progress <= 0) {
+    return {
+      estimatedCompletionRuns: null,
+      estimatedCompletionDays: null,
+      estimatedCompletionAt: ""
+    };
+  }
+  const runs = Math.ceil(remaining / progress);
+  const days = runs / dailyRuns;
+  return {
+    estimatedCompletionRuns: runs,
+    estimatedCompletionDays: Math.round(days * 10) / 10,
+    estimatedCompletionAt: new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString()
+  };
 }
 
 function isCalibratedMethod(method) {

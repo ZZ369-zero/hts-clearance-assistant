@@ -698,8 +698,9 @@ function renderSyncCard(source) {
   const anomalyText = detail.anomalyCount
     ? `异常：${detail.anomalyCount}${Array.isArray(detail.anomalySamples) && detail.anomalySamples.length ? ` / ${detail.anomalySamples.join("；")}` : ""}`
     : "";
+  const translationText = source.id === "translations" ? renderTranslationSyncSummary(detail) : "";
   const warningText = status !== "ok" && stateInfo.message ? stateInfo.message : "";
-  const extra = anomalyText || ruleStats || detail.release || detail.title || detail.effectiveNote || detail.mode || warningText || "";
+  const extra = anomalyText || translationText || ruleStats || detail.release || detail.title || detail.effectiveNote || detail.mode || warningText || "";
 
   return `
     <article class="sync-source-card">
@@ -724,6 +725,46 @@ function renderSyncCard(source) {
       </div>
     </article>
   `;
+}
+
+function renderTranslationSyncSummary(detail) {
+  if (detail.pendingDescriptions == null && detail.pendingCalibration == null) {
+    return "";
+  }
+  const accepted = numberOrZero(detail.acceptedThisRun);
+  const newTranslations = detail.newTranslationsThisRun != null
+    ? numberOrZero(detail.newTranslationsThisRun)
+    : accepted;
+  const failed = detail.failedThisRun != null
+    ? numberOrZero(detail.failedThisRun)
+    : numberOrZero(detail.rejectedThisRun) + numberOrZero(detail.deferredThisRun);
+  const remaining = [
+    detail.pendingDescriptions != null ? `待翻译：${numberOrZero(detail.pendingDescriptions)}` : "",
+    detail.pendingCalibration != null ? `待校准：${numberOrZero(detail.pendingCalibration)}` : ""
+  ].filter(Boolean).join("，");
+  const estimate = renderTranslationEstimate(detail);
+  return [
+    `本次新增：${newTranslations}`,
+    `失败：${failed}`,
+    remaining ? `剩余：${remaining}` : "",
+    estimate
+  ].filter(Boolean).join(" / ");
+}
+
+function renderTranslationEstimate(detail) {
+  if (detail.estimatedCompletionRuns === 0 || detail.pendingCalibration === 0) {
+    return "预计完成：已完成";
+  }
+  if (detail.estimatedCompletionAt) {
+    const days = detail.estimatedCompletionDays != null ? `约 ${detail.estimatedCompletionDays} 天` : "";
+    return `预计完成：${[days, formatTime(detail.estimatedCompletionAt)].filter(Boolean).join("，")}`;
+  }
+  return "预计完成：待累计更多成功样本";
+}
+
+function numberOrZero(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : 0;
 }
 
 async function loadChapters() {
