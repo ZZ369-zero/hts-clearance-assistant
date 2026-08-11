@@ -51,6 +51,11 @@ on:
         options:
           - "true"
           - "false"
+      provider_retry_count:
+        description: "Internal retry counter for temporary Copilot provider outages"
+        required: false
+        default: "0"
+        type: string
   schedule:
     # HTS / normal duty / Chapter 99: every 1 hour.
     - cron: "7 * * * *"
@@ -148,6 +153,9 @@ jobs:
           TRANSLATION_QUALITY_CYCLES: "2"
           COPILOT_REQUEST_RETRIES: "3"
           AUTO_CONTINUE_TRANSLATIONS: ${{ github.event_name == 'workflow_dispatch' && inputs.auto_continue || 'true' }}
+          PROVIDER_RETRY_COUNT: ${{ github.event_name == 'workflow_dispatch' && inputs.provider_retry_count || '0' }}
+          PROVIDER_RETRY_LIMIT: "12"
+          PROVIDER_RETRY_DELAY_SECONDS: "600"
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
@@ -166,6 +174,7 @@ jobs:
 
           processed=0
           run_accepted_total=0
+          run_deferred_total=0
           while [ "$processed" -lt "$target" ]; do
             current="$chunk"
             remaining=$((target - processed))
@@ -184,6 +193,9 @@ jobs:
             echo "Translation checkpoint stats: accepted=$accepted deferred=$deferred pendingCalibration=$pending"
             if [[ "$accepted" =~ ^[0-9]+$ ]]; then
               run_accepted_total=$((run_accepted_total + accepted))
+            fi
+            if [[ "$deferred" =~ ^[0-9]+$ ]]; then
+              run_deferred_total=$((run_deferred_total + deferred))
             fi
             if [ "$accepted" = "0" ]; then
               echo "No accepted translations in this checkpoint; stopping without committing attempt-only data."
@@ -230,7 +242,31 @@ jobs:
               -f translation_chunk_size="$chunk" \
               -f translation_model="${COPILOT_TRANSLATION_MODEL:-copilot-default}" \
               -f review_model="${COPILOT_REVIEW_MODEL:-copilot-default}" \
-              -f auto_continue=true
+              -f auto_continue=true \
+              -f provider_retry_count=0
+          elif [ "${AUTO_CONTINUE_TRANSLATIONS:-true}" = "true" ] && [ "$final_pending" != "0" ] && [ "$run_deferred_total" != "0" ]; then
+            retry_count="${PROVIDER_RETRY_COUNT:-0}"
+            retry_limit="${PROVIDER_RETRY_LIMIT:-12}"
+            retry_delay="${PROVIDER_RETRY_DELAY_SECONDS:-600}"
+            if ! [[ "$retry_count" =~ ^[0-9]+$ ]]; then retry_count=0; fi
+            if ! [[ "$retry_limit" =~ ^[0-9]+$ ]]; then retry_limit=12; fi
+            if ! [[ "$retry_delay" =~ ^[0-9]+$ ]]; then retry_delay=600; fi
+            if [ "$retry_count" -lt "$retry_limit" ]; then
+              next_retry=$((retry_count + 1))
+              echo "Translation provider deferred $run_deferred_total item(s); retrying in ${retry_delay}s (${next_retry}/${retry_limit})."
+              sleep "$retry_delay"
+              gh workflow run static-pages.yml \
+                --ref "${GITHUB_REF_NAME}" \
+                -f scope=translations \
+                -f translation_limit="$target" \
+                -f translation_chunk_size="$chunk" \
+                -f translation_model="${COPILOT_TRANSLATION_MODEL:-copilot-default}" \
+                -f review_model="${COPILOT_REVIEW_MODEL:-copilot-default}" \
+                -f auto_continue=true \
+                -f provider_retry_count="$next_retry"
+            else
+              echo "Translation provider retry limit reached (${retry_limit}); stopping auto-continuation until the next manual or scheduled run."
+            fi
           fi
 
       - name: Run description translation checks
