@@ -199,8 +199,27 @@ jobs:
               run_deferred_total=$((run_deferred_total + deferred))
             fi
             if [ "$accepted" = "0" ]; then
-              echo "No accepted translations in this checkpoint; stopping without committing attempt-only data."
-              git restore -- public/data/manifest.json public/data/translations.json
+              echo "No accepted translations in this checkpoint; publishing translation status only."
+              git restore -- public/data/translations.json
+              git add public/data/manifest.json
+              if git diff --cached --quiet; then
+                echo "No translation status changes to commit."
+              else
+                git commit -m "chore: update Chinese description translation status [skip ci]"
+                pushed=0
+                for push_attempt in 1 2 3; do
+                  if git push; then
+                    pushed=1
+                    break
+                  fi
+                  echo "Translation status push failed on attempt $push_attempt; rebasing onto latest ${GITHUB_REF_NAME} and retrying."
+                  git pull --rebase origin "${GITHUB_REF_NAME}"
+                done
+                if [ "$pushed" != "1" ]; then
+                  echo "Unable to push translation status after retries."
+                  exit 1
+                fi
+              fi
               break
             fi
 
