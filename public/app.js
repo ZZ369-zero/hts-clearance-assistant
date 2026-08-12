@@ -1471,18 +1471,39 @@ function getCompoundGeneralDutyParts(compound) {
   ].filter(Boolean);
 }
 
+function getCompoundGeneralDutyUsageParts(compound) {
+  if (!compound) {
+    return [];
+  }
+
+  return [
+    compound.fixedEach
+      ? `每件按 ${money.format(compound.fixedEach)} 固定税`
+      : "",
+    compound.caseRate
+      ? `机芯/外壳价值适用 ${formatRateNumber(compound.caseRate)}%`
+      : "",
+    compound.strapRate
+      ? `表带/表链价值适用 ${formatRateNumber(compound.strapRate)}%`
+      : "",
+    compound.batteryRate
+      ? `电池价值适用 ${formatRateNumber(compound.batteryRate)}%`
+      : ""
+  ].filter(Boolean);
+}
+
 function getGeneralRateNote(row, mode = "detail") {
   const compound = parseCompoundGeneralDuty(row?.general);
   if (!compound) {
     return "";
   }
 
-  const parts = getCompoundGeneralDutyParts(compound).join("，");
+  const parts = getCompoundGeneralDutyUsageParts(compound).join("，");
   if (mode === "table") {
-    return `复合普通税率：${parts}；按对应部件价值拆分计算。`;
+    return `复合普通税率：${parts}；不含对应部件时该部分按 0。`;
   }
 
-  return `官方基础普通税率不是单一百分比，应按部件价值拆分计算：${parts}。无电池或电池价值为 0 时，电池部分不产生基础普通关税；小程序可能只简化显示主体税率。`;
+  return `官方基础普通税率按部件价值拆分：${parts}。商品不含对应部件或该部件价值为 0 时，该部分税额按 0 估算。`;
 }
 
 function renderGeneralRateCell(row) {
