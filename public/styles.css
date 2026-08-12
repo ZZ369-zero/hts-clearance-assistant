@@ -765,6 +765,20 @@ tbody tr.selected td:first-child {
   white-space: nowrap;
 }
 
+.rate-note {
+  display: block;
+  margin-top: 5px;
+  color: #5f6f7c;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.4;
+  white-space: normal;
+}
+
+.table-rate-note {
+  max-width: 230px;
+}
+
 .search-guide {
   display: flex;
   flex-wrap: wrap;
@@ -1180,6 +1194,27 @@ tbody tr.selected td:first-child {
 .customs-tax-row .surcharge-rate {
   color: #b42318;
   font-weight: 900;
+}
+
+.general-rate-summary-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: flex-start;
+}
+
+.general-rate-summary-value {
+  display: contents;
+}
+
+.general-rate-summary-value strong {
+  grid-column: 2;
+  text-align: right;
+}
+
+.mini-rate-note {
+  grid-column: 1 / -1;
+  margin-top: 3px;
+  color: #687886;
 }
 
 .surcharge-summary-row {

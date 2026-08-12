@@ -148,6 +148,7 @@ const els = {
   miniProductDescription: document.querySelector("#miniProductDescription"),
   effectiveRate: document.querySelector("#effectiveRate"),
   miniGeneralRate: document.querySelector("#miniGeneralRate"),
+  miniGeneralRateNote: document.querySelector("#miniGeneralRateNote"),
   surchargeRate: document.querySelector("#surchargeRate"),
   surchargeBreakdown: document.querySelector("#surchargeBreakdown"),
   restrictionList: document.querySelector("#restrictionList"),
@@ -956,7 +957,7 @@ function renderRows(rows) {
             <span class="en-line">${escapeHtml(row.description || "--")}</span>
             ${renderSearchMatchMeta(row.searchMatch)}
           </td>
-          <td class="rate-cell">${escapeHtml(formatRateDisplay(row.general))}</td>
+          <td class="rate-cell">${renderGeneralRateCell(row)}</td>
           <td class="rate-cell additional-cell">${renderAdditionalCodes(row)}</td>
           <td class="rate-cell">${escapeHtml(formatRateDisplay(row.special))}</td>
           <td class="rate-cell">${escapeHtml(formatRateDisplay(row.other))}</td>
@@ -1449,6 +1450,69 @@ function formatMiniRateDisplay(value) {
   return formatRateDisplay(value);
 }
 
+function getCompoundGeneralDutyParts(compound) {
+  if (!compound) {
+    return [];
+  }
+
+  return [
+    compound.fixedEach
+      ? `每件固定税 ${money.format(compound.fixedEach)}`
+      : "",
+    compound.caseRate
+      ? `机芯/外壳 ${formatRateNumber(compound.caseRate)}%`
+      : "",
+    compound.strapRate
+      ? `表带/表链 ${formatRateNumber(compound.strapRate)}%`
+      : "",
+    compound.batteryRate
+      ? `电池 ${formatRateNumber(compound.batteryRate)}%`
+      : ""
+  ].filter(Boolean);
+}
+
+function getGeneralRateNote(row, mode = "detail") {
+  const compound = parseCompoundGeneralDuty(row?.general);
+  if (!compound) {
+    return "";
+  }
+
+  const parts = getCompoundGeneralDutyParts(compound).join("，");
+  if (mode === "table") {
+    return `复合普通税率：${parts}；按对应部件价值拆分计算。`;
+  }
+
+  return `官方基础普通税率不是单一百分比，应按部件价值拆分计算：${parts}。无电池或电池价值为 0 时，电池部分不产生基础普通关税；小程序可能只简化显示主体税率。`;
+}
+
+function renderGeneralRateCell(row) {
+  const rate = formatRateDisplay(row?.general) || "--";
+  const note = getGeneralRateNote(row, "table");
+  return `
+    <span>${escapeHtml(rate)}</span>
+    ${note ? `<small class="rate-note table-rate-note">${escapeHtml(note)}</small>` : ""}
+  `;
+}
+
+function renderGeneralRateDetail(row) {
+  const rate = formatRateDisplay(row?.general) || "--";
+  const note = getGeneralRateNote(row, "detail");
+  return `
+    <span>${escapeHtml(rate)}</span>
+    ${note ? `<small class="rate-note detail-rate-note">${escapeHtml(note)}</small>` : ""}
+  `;
+}
+
+function renderMiniGeneralRateNote(row) {
+  if (!els.miniGeneralRateNote) {
+    return;
+  }
+
+  const note = getGeneralRateNote(row, "detail");
+  els.miniGeneralRateNote.textContent = note;
+  els.miniGeneralRateNote.classList.toggle("hidden", !note);
+}
+
 function selectFirstSelectable() {
   const index = state.visibleRows.findIndex((row) => row.htsno);
   if (index >= 0) {
@@ -1494,10 +1558,11 @@ function renderDetail(row) {
     els.miniProductDescription.textContent = "从左侧结果选择一行。";
     els.effectiveRate.textContent = "--";
     els.miniGeneralRate.textContent = "--";
+    renderMiniGeneralRateNote(null);
     els.surchargeRate.textContent = "--";
     els.surchargeBreakdown.textContent = "构成：未选择；不含普通关税及 MPF/HMF";
     els.restrictionList.textContent = "未选择商品";
-    els.detailGeneral.textContent = "--";
+    els.detailGeneral.innerHTML = "--";
     els.detailSpecial.textContent = "--";
     els.detailOther.textContent = "--";
     els.detailUnits.textContent = "--";
@@ -1514,10 +1579,11 @@ function renderDetail(row) {
   els.miniProductDescription.textContent = displayZhDescription(row);
   els.effectiveRate.textContent = formatMiniRateDisplay(row.general) || "--";
   els.miniGeneralRate.textContent = formatMiniRateDisplay(row.general) || "--";
+  renderMiniGeneralRateNote(row);
   els.surchargeRate.textContent = "读取中";
   els.surchargeBreakdown.textContent = "正在核对 Chapter 99 附加税项";
   els.restrictionList.innerHTML = `<div class="restriction-empty">正在读取附加税项...</div>`;
-  els.detailGeneral.textContent = formatRateDisplay(row.general) || "--";
+  els.detailGeneral.innerHTML = renderGeneralRateDetail(row);
   els.detailSpecial.textContent = formatRateDisplay(row.special) || "--";
   els.detailOther.textContent = formatRateDisplay(row.other) || "--";
   els.detailUnits.textContent = row.units?.length ? row.units.join(", ") : "--";
@@ -2239,7 +2305,7 @@ function applyRate(row) {
   if (compound) {
     els.generalRate.value = "0";
     els.generalRate.readOnly = true;
-    state.baseRateMessage = `已从 ${row.htsno} 识别钟表复合普通税率，请填写数量、表壳、表带/表链和电池价值后计算。`;
+    state.baseRateMessage = `已从 ${row.htsno} 识别基础复合普通税率（${getCompoundGeneralDutyParts(compound).join("，")}），请按实际构成填写对应价值后计算。`;
     els.calcMessage.textContent = state.baseRateMessage;
     calculate();
     return;
@@ -2284,13 +2350,19 @@ function renderCompoundDutyPanel(compound) {
   }
 
   els.compoundDutyFormula.textContent = compound.formula;
+  const formulaParts = [
+    compound.fixedEach ? `数量 × ${money.format(compound.fixedEach)}` : "",
+    compound.caseRate ? `机芯/外壳价值 × ${formatRateNumber(compound.caseRate)}%` : "",
+    compound.strapRate ? `表带/表链价值 × ${formatRateNumber(compound.strapRate)}%` : "",
+    compound.batteryRate ? `电池价值 × ${formatRateNumber(compound.batteryRate)}%` : ""
+  ].filter(Boolean);
   els.compoundDutyNotice.textContent =
-    `计算式：数量 × ${money.format(compound.fixedEach)} + 表壳价值 × ${formatRateNumber(compound.caseRate)}% + 表带/表链价值 × ${formatRateNumber(compound.strapRate)}% + 电池价值 × ${formatRateNumber(compound.batteryRate)}%。`;
+    `计算式：${formulaParts.join(" + ")}。各部件价值请按发票、成本拆分或报关资料填写；不含的部件按 0 处理。`;
 }
 
 function parseCompoundGeneralDuty(value) {
   const text = String(value || "").replace(/\s+/g, " ").trim();
-  if (!text || !/each/i.test(text) || !/(case|strap|band|bracelet|battery)/i.test(text)) {
+  if (!text || !/%\s*on/i.test(text) || !/(movement|case|strap|band|bracelet|battery)/i.test(text)) {
     return null;
   }
 
@@ -2313,7 +2385,7 @@ function parseCompoundGeneralDuty(value) {
   for (const match of text.matchAll(/(\d+(?:\.\d+)?)\s*%\s*on\s+(?:the\s+)?([^+]+)/gi)) {
     const rate = Number(match[1]);
     const target = match[2].toLowerCase();
-    if (target.includes("case")) {
+    if (target.includes("case") || target.includes("movement")) {
       duty.caseRate = rate;
     }
     if (/strap|band|bracelet/.test(target)) {
@@ -2403,15 +2475,17 @@ function buildCompoundGeneralDutyCalcLines(compound) {
       label: "固定税额",
       displayName: "固定税额：数量",
       rateText: `${money.format(compound.fixedEach)} / No.`,
-      amount: quantity * compound.fixedEach
+      amount: quantity * compound.fixedEach,
+      active: compound.fixedEach > 0
     },
     {
       group: "general",
       shortLabel: "表壳",
-      label: "表壳价值",
-      displayName: "表壳价值",
+      label: "机芯/外壳价值",
+      displayName: "机芯/外壳价值",
       rateText: `${formatRateNumber(compound.caseRate)}%`,
-      amount: caseValue * (compound.caseRate / 100)
+      amount: caseValue * (compound.caseRate / 100),
+      active: compound.caseRate > 0
     },
     {
       group: "general",
@@ -2419,7 +2493,8 @@ function buildCompoundGeneralDutyCalcLines(compound) {
       label: "表带/表链价值",
       displayName: "表带/表链价值",
       rateText: `${formatRateNumber(compound.strapRate)}%`,
-      amount: strapValue * (compound.strapRate / 100)
+      amount: strapValue * (compound.strapRate / 100),
+      active: compound.strapRate > 0
     },
     {
       group: "general",
@@ -2427,9 +2502,10 @@ function buildCompoundGeneralDutyCalcLines(compound) {
       label: "电池价值",
       displayName: "电池价值",
       rateText: `${formatRateNumber(compound.batteryRate)}%`,
-      amount: batteryValue * (compound.batteryRate / 100)
+      amount: batteryValue * (compound.batteryRate / 100),
+      active: compound.batteryRate > 0
     }
-  ].filter((item) => item.rateText !== "0%" || item.amount > 0);
+  ].filter((item) => item.active || item.amount > 0);
 }
 
 function buildAdditionalDutyCalcLines(value, additionalRate, specificDuty) {

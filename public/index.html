@@ -143,9 +143,12 @@
                   <span>适用税率:</span>
                   <strong id="effectiveRate">--</strong>
                 </div>
-                <div class="customs-tax-row">
+                <div class="customs-tax-row general-rate-summary-row">
                   <span>一般税率:</span>
-                  <strong id="miniGeneralRate">--</strong>
+                  <div class="general-rate-summary-value">
+                    <strong id="miniGeneralRate">--</strong>
+                    <small id="miniGeneralRateNote" class="rate-note mini-rate-note hidden"></small>
+                  </div>
                 </div>
                 <div class="customs-tax-row surcharge-summary-row">
                   <span>附加税率小计（估算）:</span>
@@ -230,7 +233,7 @@
                     <input id="watchQuantity" type="number" min="0" step="1" value="0" />
                   </label>
                   <label>
-                    表壳价值 USD
+                    机芯 / 外壳价值 USD
                     <input id="watchCaseValue" type="number" min="0" step="0.01" value="0" />
                   </label>
                   <label>
@@ -357,6 +360,6 @@
       </main>
     </div>
 
-    <script src="./app.js?v=20260810-forced-labor-display-1" type="module"></script>
+    <script src="./app.js?v=20260812-compound-rate-note-1" type="module"></script>
   </body>
 </html>
