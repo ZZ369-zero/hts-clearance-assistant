@@ -36,7 +36,7 @@ import { rankHtsSearchCandidates } from "./search-ranking.js?v=20260729-relevanc
 import {
   describeSection232Condition,
   selectSection232MetalCandidates
-} from "./section232-metal-engine.js?v=20260803-section232-grouped-headings-1";
+} from "./section232-metal-engine.js?v=20260825-wood-products-1";
 
 const section122FallbackExclusionPrefixes = [
   "84713001",
@@ -223,6 +223,16 @@ const searchHistoryStorageKey = "hts-clearance-search-history";
 const searchHistoryLimit = 8;
 
 const dutyRuleCatalog = {
+  "9903.88.04": {
+    group: "301",
+    label: "301-对中加征",
+    shortLabel: "301",
+    rate: 25,
+    autoApply: true,
+    summaryZh: "301 对中国原产商品加征，编码 9903.88.04，当前税率 +25%。",
+    exemptionStatus: "无豁免",
+    note: "USITC Chapter 99 U.S. note 20(g) 覆盖的中国原产商品附加税；需确认排除统计号和原产国。"
+  },
   "9903.88.15": {
     group: "301",
     label: "301-对中加征",
@@ -389,6 +399,65 @@ const vehiclePartsSection232Options = [
 ];
 
 const vehiclePartsSection232CodeSet = new Set(vehiclePartsSection232Options.map((option) => option.code));
+
+const china301Note20gSeatingOverrides = [
+  {
+    prefix: "94016140",
+    code: "9903.88.04",
+    exclude: ["9401614001"],
+    note: "USITC Chapter 99 U.S. note 20(g) lists 9401.61.40, except statistical reporting number 9401.61.4001."
+  },
+  {
+    prefix: "94016960",
+    code: "9903.88.04",
+    exclude: ["9401696001"],
+    note: "USITC Chapter 99 U.S. note 20(g) lists 9401.69.60, except statistical reporting number 9401.69.6001."
+  },
+  {
+    prefix: "94017100",
+    code: "9903.88.04",
+    exclude: ["9401710001", "9401710005", "9401710006", "9401710007"],
+    note: "USITC Chapter 99 U.S. note 20(g) lists 9401.71.00 with statistical reporting number exclusions."
+  },
+  {
+    prefix: "94017900",
+    code: "9903.88.04",
+    exclude: ["9401790001", "9401790002", "9401790003", "9401790004"],
+    note: "USITC Chapter 99 U.S. note 20(g) lists 9401.79.00 with statistical reporting number exclusions."
+  },
+  {
+    prefix: "94018020",
+    code: "9903.88.04",
+    exclude: ["9401802001"],
+    note: "USITC Chapter 99 U.S. note 20(g) lists 9401.80.20, except statistical reporting number 9401.80.2001."
+  },
+  {
+    prefix: "94018040",
+    code: "9903.88.04",
+    exclude: ["9401804001"],
+    note: "USITC Chapter 99 U.S. note 20(g) lists 9401.80.40, except statistical reporting number 9401.80.4001."
+  }
+];
+
+const section232WoodProductRules = [
+  {
+    code: "9903.76.02",
+    rate: 25,
+    prefixes: ["9401614011", "9401614031", "9401616011", "9401616031"],
+    label: "232-木制品",
+    material: {
+      code: "upholstered-wood-furniture",
+      label: "软包木框家具",
+      shortLabel: "木制品",
+      detailLabel: "软包木框家具"
+    },
+    context: "Upholstered wooden furniture products, as provided for in U.S. note 59 to Chapter 99.",
+    source: "CBP Timber and Lumber Section 232 HTS List",
+    sourceUrl: "https://content.govdelivery.com/accounts/USDHSCBP/bulletins/3f69699",
+    summaryZh: "232 木制品 9903.76.02 命中软包木框家具清单，适用于中国等非英国、欧盟、日本来源时，税率 +25%。",
+    note: "CBP CSMS #66492057 / Proclamation 10976 列明 9401.61.4011、9401.61.4031、9401.61.6011 和 9401.61.6031；英国、欧盟、日本来源需核对对应国家专属分支。"
+  }
+];
 const themeStorageKey = "hts-clearance-theme-v1";
 const supportedThemes = new Set(["cloud", "lake", "mint"]);
 
@@ -993,7 +1062,14 @@ function renderSearchGuide(hints) {
 }
 
 function renderAdditionalCodes(row) {
-  const rules = buildAdditionalDutyRules(row);
+  const section232Matches = getSection232WoodProductMatches(row);
+  const rules = mergeAdditionalDutyRules([
+    ...buildAdditionalDutyRules(row, {
+      section232Matches,
+      appliedChapter99Rules: section232Matches.filter((match) => match.autoApply !== false && isSection232Code(match.code))
+    }),
+    ...section232Matches.map((match) => createSection232Rule(match))
+  ]);
   if (rules.length) {
     return rules
       .slice(0, 3)
@@ -1011,7 +1087,10 @@ function renderAdditionalCodes(row) {
 }
 
 function buildAdditionalDutyRules(row, context = {}) {
-  const sourceCodes = [...new Set([...(row.additionalDutyCodes || []), ...getDefaultAdditionalDutyCodes(context)])];
+  const sourceCodes = normalizeRuntimeAdditionalDutyCodes(row, [
+    ...(row.additionalDutyCodes || []),
+    ...getDefaultAdditionalDutyCodes(context)
+  ]);
   return sourceCodes.map((code) => {
     if (isSection232Code(code)) {
       return createSection232Rule({
@@ -1322,6 +1401,47 @@ function inferDutyRuleByCode(code) {
   return {};
 }
 
+function getSection232WoodProductMatches(row) {
+  const digits = normalizeStaticHtsDigits(row?.htsno);
+  if (!digits) {
+    return [];
+  }
+  return section232WoodProductRules
+    .filter((rule) => (rule.prefixes || []).some((prefix) => digits.startsWith(prefix)))
+    .map((rule) => {
+      const matchedPrefix = (rule.prefixes || []).find((prefix) => digits.startsWith(prefix)) || digits;
+      return {
+        code: rule.code,
+        htsMatch: formatStaticHtsDigits(matchedPrefix),
+        normalizedMatch: matchedPrefix,
+        context: rule.context,
+        material: rule.material,
+        label: rule.label,
+        confidence: matchedPrefix === digits ? "exact" : "prefix",
+        rate: rule.rate,
+        autoApply: true,
+        alternatives: 1,
+        source: rule.source,
+        sourceUrl: rule.sourceUrl,
+        summaryZh: rule.summaryZh,
+        note: rule.note
+      };
+    });
+}
+
+function mergeSection232Matches(matches = []) {
+  const merged = new Map();
+  for (const match of matches) {
+    if (!match?.code) {
+      continue;
+    }
+    const key = `${match.code}|${normalizeStaticHtsDigits(match.normalizedMatch || match.htsMatch || "") || normalizeStaticHtsDigits(match.hts || "")}`;
+    const existing = merged.get(key);
+    merged.set(key, existing ? { ...existing, ...match } : match);
+  }
+  return [...merged.values()];
+}
+
 function buildSection232Rules(row, data) {
   if (data?.value?.length) {
     return data.value.map((match) => createSection232Rule(match, data.source));
@@ -1404,7 +1524,7 @@ function mergeAdditionalDutyBreakdown(items) {
 }
 
 function isSection232Code(code) {
-  return isVehiclePartsSection232Code(code) || /^9903\.(80|81|82|83|84|85)\.\d{2}$/.test(String(code || ""));
+  return isVehiclePartsSection232Code(code) || /^9903\.(76|80|81|82|83|84|85)\.\d{2}$/.test(String(code || ""));
 }
 
 function isVehiclePartsSection232Code(code) {
@@ -1448,6 +1568,26 @@ function formatMiniRateDisplay(value) {
     return "Free";
   }
   return formatRateDisplay(value);
+}
+
+function normalizeRuntimeAdditionalDutyCodes(row, codes = []) {
+  const digits = normalizeStaticHtsDigits(row?.htsno);
+  const values = new Set((Array.isArray(codes) ? codes : [codes]).filter(Boolean).map(String));
+  if (!digits) {
+    return [...values].sort();
+  }
+
+  for (const rule of china301Note20gSeatingOverrides) {
+    if (!digits.startsWith(rule.prefix)) {
+      continue;
+    }
+    if ((rule.exclude || []).some((excluded) => digits.startsWith(excluded))) {
+      values.delete(rule.code);
+    } else {
+      values.add(rule.code);
+    }
+  }
+  return [...values].sort();
 }
 
 function getCompoundGeneralDutyParts(compound) {
@@ -1726,6 +1866,7 @@ async function loadAdditionalDuties(row) {
     if (requestId !== state.additionalDutyRequestId) {
       return;
     }
+    const runtimeWoodMatches = getSection232WoodProductMatches(row);
     const rowSelectionKey = rowKey(row);
     const vehicleChoice = resolveVehiclePartsDutyChoice(
       section232.value || [],
@@ -1734,20 +1875,24 @@ async function loadAdditionalDuties(row) {
     if (vehicleChoice.hasVehicleChoices) {
       state.vehicleDutySelections.set(rowSelectionKey, vehicleChoice.selectedChoice);
     }
+    const section232Matches = mergeSection232Matches([
+      ...runtimeWoodMatches,
+      ...(vehicleChoice.matches || [])
+    ]);
     const appliedChapter99Rules = [
       ...getSelectedVehicleChapter99Rules(vehicleChoice),
-      ...(vehicleChoice.matches || []).filter((match) =>
+      ...section232Matches.filter((match) =>
         !match.choiceGroup && match.autoApply !== false && isSection232Code(match.code)
       )
     ];
     const policyContext = {
-      section232Matches: vehicleChoice.matches || [],
+      section232Matches,
       vehicleDutyChoice: vehicleChoice.selectedChoice,
       appliedChapter99Rules
     };
     rules = mergeAdditionalDutyRules([
       ...buildAdditionalDutyRules(row, policyContext),
-      ...buildSection232Rules(row, { ...section232, value: vehicleChoice.matches || [] })
+      ...buildSection232Rules(row, { ...section232, value: section232Matches })
     ]);
   } catch (error) {
     if (requestId !== state.additionalDutyRequestId) {
@@ -3311,7 +3456,8 @@ function findStaticSection232Matches(hts, mappings, generalRateText = "", vehicl
       alternatives: metalCandidates.length,
       summaryZh: condition.summary,
       note: condition.note,
-      source: "CBP Metals HTS List"
+      source: candidate.entry.source || "CBP Metals HTS List",
+      sourceUrl: candidate.entry.sourceUrl || ""
     };
   })];
 }
@@ -3368,6 +3514,9 @@ function buildVehiclePartsSection232Matches(hts, normalized = normalizeStaticHts
 
 function classifyStaticSection232Material(entry) {
   const text = `${entry.context || ""} ${entry.chapter99 || ""}`.toLowerCase();
+  if (/^9903\.76\./.test(entry.chapter99 || "") || /wood|timber|lumber|upholstered/i.test(text)) {
+    return { code: "wood-products", label: "Wood products", shortLabel: "Wood", detailLabel: /upholstered/i.test(text) ? "Upholstered wooden furniture" : "Wood products" };
+  }
   const derivative = /derivative/.test(text);
   if (/copper/.test(text)) {
     return { code: derivative ? "derivative-copper" : "copper", label: "Copper", shortLabel: "Copper", detailLabel: derivative ? "Derivative copper products" : "Copper products" };
@@ -3406,7 +3555,7 @@ function isStaticCountrySpecificSection232(entry) {
     return true;
   }
   const text = `${entry.chapter99} ${entry.context}`.toLowerCase();
-  return /united kingdom|russia|russian|argentina|australia|brazil|canada|mexico|general note 3\(b\)/i.test(text);
+  return /united kingdom|european union|japan|russia|russian|argentina|australia|brazil|canada|mexico|general note 3\(b\)/i.test(text);
 }
 
 function parseStaticSimplePercent(value) {

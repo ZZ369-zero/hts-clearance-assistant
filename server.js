@@ -26,6 +26,7 @@ const SECTION_232_MONITOR_URLS = [
   "https://www.cbp.gov/trade/programs-administration/trade-remedies",
   "https://content.govdelivery.com/accounts/USDHSCBP/bulletins/41aa83d"
 ];
+const SECTION_232_WOOD_PRODUCTS_SOURCE_URL = "https://content.govdelivery.com/accounts/USDHSCBP/bulletins/3f69699";
 const SECTION_232_VEHICLE_PARTS_PATH = path.join(publicDir, "data", "section232-vehicle-parts.json");
 const SECTION_122_ANNEX_II_URL =
   "https://www.whitehouse.gov/wp-content/uploads/2026/02/2026Section122.prc_.ANNEX2_.Final_.pdf";
@@ -103,6 +104,27 @@ const vehiclePartsSection232Options = [
   }
 ];
 
+const china301Note20gSeatingOverrides = [
+  { prefix: "94016140", code: "9903.88.04", exclude: ["9401614001"] },
+  { prefix: "94016960", code: "9903.88.04", exclude: ["9401696001"] },
+  { prefix: "94017100", code: "9903.88.04", exclude: ["9401710001", "9401710005", "9401710006", "9401710007"] },
+  { prefix: "94017900", code: "9903.88.04", exclude: ["9401790001", "9401790002", "9401790003", "9401790004"] },
+  { prefix: "94018020", code: "9903.88.04", exclude: ["9401802001"] },
+  { prefix: "94018040", code: "9903.88.04", exclude: ["9401804001"] }
+];
+
+const section232WoodProductEntries = [
+  ...["9401.61.4011", "9401.61.4031", "9401.61.6011", "9401.61.6031"].map((displayHts) => ({
+    chapter99: "9903.76.02",
+    hts: normalizeHtsDigits(displayHts),
+    displayHts,
+    context: "Upholstered wooden furniture products, as provided for in U.S. note 59 to Chapter 99.",
+    headingGroup: "9903.76.02",
+    source: "CBP Timber and Lumber Section 232 HTS List",
+    sourceUrl: SECTION_232_WOOD_PRODUCTS_SOURCE_URL
+  }))
+];
+
 const cache = new Map();
 const syncState = new Map();
 const ttl = {
@@ -167,12 +189,12 @@ const syncSources = [
   },
   {
     id: "section232",
-    name: "232 金属与车辆零部件清单",
+    name: "232 金属、车辆与木制品清单",
     sourceName: "CBP / GovDelivery Section 232 HTS Lists",
     url: SECTION_232_FALLBACK_METALS_LIST_URL,
     monitorUrls: SECTION_232_MONITOR_URLS,
     intervalMs: 6 * 60 * 60 * 1000,
-    description: "每 6 小时抓取 CBP Metals、汽车零部件和中重型车辆零部件官方清单。"
+    description: "每 6 小时抓取 CBP Metals、汽车零部件、中重型车辆零部件，并附加 CBP 木制品 232 官方公告清单。"
   },
   {
     id: "cotton",
@@ -1403,10 +1425,11 @@ async function handleApi(req, res, url) {
     sendJson(res, 200, {
       ...mappings,
       source: {
-        name: "CBP Metals HTS List",
+        name: "CBP Section 232 HTS Lists",
         url: mappings.sourceUrl || SECTION_232_FALLBACK_METALS_LIST_URL,
         discoveryUrl: mappings.discoveryUrl,
         discoveryStatus: mappings.discoveryStatus,
+        woodProductsSourceUrl: mappings.woodProductsSourceUrl || SECTION_232_WOOD_PRODUCTS_SOURCE_URL,
         fetchedAt: mappings.fetchedAt,
         effectiveNote: mappings.effectiveNote
       }
@@ -1782,11 +1805,16 @@ async function loadSection232Mappings(force = false) {
   const documentXml = extractZipEntry(buffer, "word/document.xml").toString("utf8");
   const paragraphs = extractDocxParagraphs(documentXml);
   const mappings = parseSection232Paragraphs(paragraphs);
+  mappings.entries = mergeSection232Entries([
+    ...(mappings.entries || []),
+    ...section232WoodProductEntries
+  ]);
   mappings.fetchedAt = new Date().toISOString();
   mappings.sourceUrl = source.url;
   mappings.discoveryUrl = source.discoveryUrl;
   mappings.discoveredAt = source.discoveredAt;
   mappings.discoveryStatus = source.status;
+  mappings.woodProductsSourceUrl = SECTION_232_WOOD_PRODUCTS_SOURCE_URL;
   cache.set(key, { time: now, data: mappings });
   return mappings;
 }
@@ -2409,6 +2437,26 @@ function parseSection232Paragraphs(paragraphs) {
   };
 }
 
+function mergeSection232Entries(entries = []) {
+  const merged = new Map();
+  for (const entry of entries) {
+    const chapter99 = cleanValue(entry.chapter99);
+    const hts = normalizeHtsDigits(entry.hts || entry.displayHts);
+    if (!chapter99 || !hts) {
+      continue;
+    }
+    const key = `${chapter99}|${hts}`;
+    merged.set(key, {
+      ...entry,
+      chapter99,
+      hts,
+      displayHts: entry.displayHts || formatHtsDigits(hts)
+    });
+  }
+  return [...merged.values()]
+    .sort((a, b) => b.hts.length - a.hts.length || a.chapter99.localeCompare(b.chapter99));
+}
+
 function parseSection232Heading(paragraph) {
   const text = String(paragraph || "").trim();
   if (!/^9903\.\d{2}\.\d{2}\b/.test(text)) {
@@ -2477,7 +2525,8 @@ function findSection232Matches(hts, mappings, generalRateText = "", vehicleParts
       alternatives: metalCandidates.length,
       summaryZh: condition.summary,
       note: condition.note,
-      source: "CBP Metals HTS List"
+      source: candidate.entry.source || "CBP Metals HTS List",
+      sourceUrl: candidate.entry.sourceUrl || ""
     };
   })];
 }
@@ -2533,11 +2582,19 @@ function buildVehiclePartsSection232Matches(hts, normalized = normalizeHtsDigits
 }
 
 function isSection232Chapter99(code) {
-  return /^(9903\.(80|81|82|83|84|85)\.\d{2}|9903\.(94\.05|74\.08))$/.test(code);
+  return /^(9903\.(76|80|81|82|83|84|85)\.\d{2}|9903\.(94\.05|74\.08))$/.test(code);
 }
 
 function classifySection232Material(entry) {
   const text = `${entry.context || ""} ${entry.chapter99 || ""}`.toLowerCase();
+  if (/^9903\.76\./.test(entry.chapter99 || "") || /wood|timber|lumber|upholstered/i.test(text)) {
+    return {
+      code: "wood-products",
+      label: "木制品",
+      shortLabel: "木制品",
+      detailLabel: /upholstered/i.test(text) ? "软包木框家具" : "木制品"
+    };
+  }
   const hasDerivative = /derivative/.test(text);
   const hasAluminum = /aluminum|aluminium/.test(text);
   const hasSteel = /steel/.test(text);
@@ -2610,6 +2667,9 @@ function rankSection232Match(entry, baseRate) {
   }
 
   const ranks = new Map([
+    ["9903.76.02", 100],
+    ["9903.76.03", 100],
+    ["9903.76.04", 5],
     ["9903.82.02", 100],
     ["9903.82.09", 95],
     ["9903.82.07", 90],
@@ -2626,7 +2686,7 @@ function isCountrySpecificSection232(entry) {
     return true;
   }
   const text = `${entry.chapter99} ${entry.context}`.toLowerCase();
-  return /united kingdom|russia|russian|argentina|australia|brazil|canada|mexico|general note 3\(b\)/i.test(text);
+  return /united kingdom|european union|japan|russia|russian|argentina|australia|brazil|canada|mexico|general note 3\(b\)/i.test(text);
 }
 
 function parseSimplePercent(value) {
@@ -3254,7 +3314,12 @@ const knownAdditionalDutyCodeOverrides = new Map([
 ]);
 
 function applyKnownAdditionalDutyOverrides(row) {
-  const allowedCodes = knownAdditionalDutyCodeOverrides.get(normalizeHtsDigits(row.htsno));
+  const hts = normalizeHtsDigits(row.htsno);
+  const values = new Set(row.additionalDutyCodes || []);
+  applyChina301Note20gAdjustments(hts, values);
+  row.additionalDutyCodes = [...values];
+
+  const allowedCodes = knownAdditionalDutyCodeOverrides.get(hts);
   if (!allowedCodes) {
     return row;
   }
@@ -3262,6 +3327,23 @@ function applyKnownAdditionalDutyOverrides(row) {
   const nonChinaCodes = (row.additionalDutyCodes || []).filter((code) => !isChina301DutyCode(code));
   row.additionalDutyCodes = [...new Set([...nonChinaCodes, ...allowedCodes])];
   return row;
+}
+
+function applyChina301Note20gAdjustments(hts, values) {
+  const digits = normalizeHtsDigits(hts);
+  if (!digits) {
+    return;
+  }
+  for (const rule of china301Note20gSeatingOverrides) {
+    if (!digits.startsWith(rule.prefix)) {
+      continue;
+    }
+    if ((rule.exclude || []).some((excluded) => digits.startsWith(excluded))) {
+      values.delete(rule.code);
+    } else {
+      values.add(rule.code);
+    }
+  }
 }
 
 function isChina301DutyCode(code) {

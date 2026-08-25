@@ -233,7 +233,7 @@ function checkChinaTariffs301(manifest, searchIndex, snapshot) {
   const sourceWarningSurfaced = source?.state?.status === "warning"
     && (
       Number(sourceDetail.anomalyCount || 0) > 0
-      || /China Tariffs 301|3924\.90\.56|3924905650|9903\.88\.15/.test(`${source?.state?.message || ""} ${JSON.stringify(sourceDetail)}`)
+      || /China Tariffs 301|3924\.90\.56|3924905650|9401\.61|9401\.69|9903\.88\.(04|15)/.test(`${source?.state?.message || ""} ${JSON.stringify(sourceDetail)}`)
     );
   const sourceCodes = new Set(snapshot.byHts?.["39249056"] || []);
   const row = findRowByDigits(searchIndex, "3924905650");
@@ -250,6 +250,42 @@ function checkChinaTariffs301(manifest, searchIndex, snapshot) {
     "3924.90.56.50 China 301 mapping reaches search index or sync center warning",
     rowHasSentinel || sourceWarningSurfaced,
     `row=${row?.htsno || "missing"}; additionalDutyCodes=${[...rowCodes].join(",") || "none"}; syncStatus=${source?.state?.status || "missing"}; message=${source?.state?.message || ""}`
+  );
+
+  const seatingIncludes = [
+    ["9401614011", "9401.61.40.11 upholstered wooden household seats"],
+    ["9401696011", "9401.69.60.11 wooden household seats"],
+    ["9401710011", "9401.71.00 seating"],
+    ["9401790011", "9401.79.00 seating"],
+    ["9401802011", "9401.80.20 seating"],
+    ["9401804006", "9401.80.40 seating"]
+  ];
+  const missingSeatingIncludes = seatingIncludes.filter(([digits]) => {
+    const targetRow = findRowByDigits(searchIndex, digits);
+    return !targetRow || !(targetRow.additionalDutyCodes || []).includes("9903.88.04");
+  });
+  record(
+    "Chapter 99 note 20(g) seating inclusions reach search index as 9903.88.04",
+    missingSeatingIncludes.length === 0 || sourceWarningSurfaced,
+    `missing=${missingSeatingIncludes.map(([, label]) => label).join("; ") || "none"}; syncStatus=${source?.state?.status || "missing"}`
+  );
+
+  const seatingExclusions = [
+    "9401614001",
+    "9401696001",
+    "9401710001",
+    "9401790001",
+    "9401802001",
+    "9401804001"
+  ];
+  const unexpectedExclusions = seatingExclusions.filter((digits) => {
+    const targetRow = findRowByDigits(searchIndex, digits);
+    return targetRow && (targetRow.additionalDutyCodes || []).includes("9903.88.04");
+  });
+  record(
+    "Chapter 99 note 20(g) seating statistical exclusions are not over-applied",
+    unexpectedExclusions.length === 0,
+    `unexpected=${unexpectedExclusions.map(formatHts).join(",") || "none"}`
   );
 }
 
@@ -432,6 +468,21 @@ function checkSection232Snapshot(section232) {
       && candidateCodes.has("9903.82.03")
       && candidateCodes.has("9903.82.07"),
     `raw=${[...conveyorRawCodes].sort().join(",")}; candidates=${[...candidateCodes].sort().join(",")}; applied=${applied?.entry.chapter99 || "none"}; rate=${applied?.rate ?? "--"}`
+  );
+
+  const woodRawCodes = new Set(entries
+    .filter((entry) => cleanHts(entry.hts) === "9401614011")
+    .map((entry) => entry.chapter99));
+  const woodCandidates = selectSection232MetalCandidates("9401614011", entries, "Free");
+  const woodApplied = woodCandidates.find((candidate) => candidate.autoApply);
+  const nonWoodCandidates = selectSection232MetalCandidates("9401696011", entries, "Free");
+  record(
+    "9401.61 upholstered wooden household seats hit 232 wood products while 9401.69 does not",
+    woodRawCodes.has("9903.76.02")
+      && woodApplied?.entry.chapter99 === "9903.76.02"
+      && Number(woodApplied.rate) === 25
+      && !nonWoodCandidates.some((candidate) => candidate.entry.chapter99 === "9903.76.02"),
+    `9401614011 raw=${[...woodRawCodes].join(",") || "none"}; applied=${woodApplied?.entry.chapter99 || "none"}; rate=${woodApplied?.rate ?? "--"}; 9401696011 candidates=${nonWoodCandidates.map((candidate) => candidate.entry.chapter99).join(",") || "none"}`
   );
 }
 

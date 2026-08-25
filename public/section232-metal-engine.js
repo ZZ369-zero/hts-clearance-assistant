@@ -1,4 +1,5 @@
 const noAdditionalDutyCodes = new Set([
+  "9903.76.04",
   "9903.82.01",
   "9903.82.03",
   "9903.82.08",
@@ -60,6 +61,21 @@ export function describeSection232Condition(code, baseRateText = "") {
   const baseRate = parseSimplePercent(baseRateText);
   const baseLabel = baseRate == null ? "普通税率待确认" : `普通税率 ${formatRate(baseRate)}%`;
   const descriptions = {
+    "9903.76.02": {
+      label: "232-木制品",
+      summary: "软包木框家具命中 232 木制品清单，适用于中国等非英国、欧盟、日本来源时，附加税 25%。",
+      note: "CBP 木材、木制品及衍生产品清单列明 9401.61.4011、9401.61.4031、9401.61.6011 和 9401.61.6031；英国、欧盟、日本来源应核对对应国家专属分支。"
+    },
+    "9903.76.03": {
+      label: "232-木制品",
+      summary: "木制橱柜、浴室柜及其零件命中 232 木制品清单，适用于中国等非英国、欧盟、日本来源时，附加税 25%。",
+      note: "须确认商品属于已完成橱柜、浴室柜或对应木制零件；未完成品或特定国家来源需核对其他 9903.76 分支。"
+    },
+    "9903.76.04": {
+      label: "232-木制品条件排除",
+      summary: "未完成或特定条件下木制品分支，当前不自动计入 232 附加税。",
+      note: "该分支通常需要按商品完成状态、原产国和申报说明复核。"
+    },
     "9903.82.01": {
       label: "232-不含适用金属",
       summary: "商品不含适用的铝、钢或铜，232 附加税为 0%。",
@@ -116,6 +132,9 @@ function isRateBranchCompatible(code, baseRate) {
 
 function rankSection232Match(entry) {
   const ranks = new Map([
+    ["9903.76.02", 100],
+    ["9903.76.03", 100],
+    ["9903.76.04", 5],
     ["9903.82.02", 100],
     ["9903.82.09", 95],
     ["9903.82.10", 90],
@@ -133,6 +152,15 @@ function getSection232AdditionalRate(code, baseRate) {
   if (noAdditionalDutyCodes.has(code)) {
     return 0;
   }
+  if (code === "9903.76.02" || code === "9903.76.03") {
+    return 25;
+  }
+  if (code === "9903.76.01" || code === "9903.76.20") {
+    return 10;
+  }
+  if (/^9903\.76\.(21|22|23|24)$/.test(code)) {
+    return 15;
+  }
   if (code === "9903.82.07" && baseRate != null) {
     return Math.max(0, roundRate(10 - baseRate));
   }
@@ -147,7 +175,7 @@ function isCountrySpecificSection232(entry) {
     return true;
   }
   const text = `${entry.chapter99 || ""} ${entry.context || ""}`.toLowerCase();
-  return /united kingdom|russia|russian|belarus|cuba|north korea|argentina|australia|brazil|canada|mexico|general note 3\(b\)/i.test(text);
+  return /united kingdom|european union|japan|russia|russian|belarus|cuba|north korea|argentina|australia|brazil|canada|mexico|general note 3\(b\)/i.test(text);
 }
 
 function parseSimplePercent(value) {

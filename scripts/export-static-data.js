@@ -80,7 +80,7 @@ const sourceLabels = {
   forcedLabor301: ["New 301 forced labor duty", "CBP Section 301 Forced Labor Import Duties", "Compatibility snapshot derived from policy-rules.json for 9903.05.31.", forcedLabor301SourceUrl],
   forcedLaborExemptions: ["新301排除清单", "CBP Forced Labor HTS List", "解析9903.05.85-9903.05.92排除规则，统计有效、到期、精确HTS及条件类项目。", forcedLabor301SourceUrl],
   section122: ["122 Annex II exclusions", "White House Section 122 Annex II", "Section 122 Annex II HTS exclusion prefixes used to avoid applying 9903.03.01 to excluded goods.", "https://www.whitehouse.gov/wp-content/uploads/2026/02/2026Section122.prc_.ANNEX2_.Final_.pdf"],
-  section232: ["232 金属与车辆零部件清单", "CBP / GovDelivery Section 232 HTS Lists", "CBP 金属、汽车零部件和中重型车辆零部件官方清单。", "https://www.cbp.gov/trade/programs-administration/trade-remedies"],
+  section232: ["232 金属、车辆与木制品清单", "CBP / GovDelivery Section 232 HTS Lists", "CBP 金属、汽车零部件、中重型车辆零部件和木制品官方清单。", "https://www.cbp.gov/trade/programs-administration/trade-remedies"],
   cotton: ["Cotton Import Assessment", "eCFR 7 CFR 1205", "Cotton import assessment table.", "https://www.ecfr.gov/current/title-7/subtitle-B/chapter-XI/part-1205/subpart-ECFR80efc31412f8612"],
   adcvdOfficial: ["AD/CVD official ACCESS", "ITA ACCESS AD/CVD", "Official ACCESS status monitor.", "https://access.trade.gov/adcvd"],
   adcvdLocal: ["AD/CVD HTS match dataset", "Local AD/CVD data snapshot", "HTS match snapshot used by the static site.", "https://access.trade.gov/adcvd"],
@@ -88,6 +88,29 @@ const sourceLabels = {
   fdaFlags: ["FDA FD1-FD4 HTS flags", "FDA / CustomsInfo public OGA lists", "FDA flag meanings and exact HTS code lists used for FD1-FD4 entry prompts.", "https://www.fda.gov/industry/import-basics/harmonized-tariff-schedule-and-fd-flags"],
   translations: ["商品中文描述缓存", "GitHub Copilot 强模型 + HTS术语校准", "强模型翻译并通过数字、范围与法律限定词校验的双语商品描述；访客浏览时不再逐条等待在线翻译。", ""]
 };
+
+const section232WoodProductsSourceUrl = "https://content.govdelivery.com/accounts/USDHSCBP/bulletins/3f69699";
+
+const china301Note20gSeatingOverrides = [
+  { prefix: "94016140", code: "9903.88.04", exclude: ["9401614001"], sentinel: "9401614011" },
+  { prefix: "94016960", code: "9903.88.04", exclude: ["9401696001"], sentinel: "9401696011" },
+  { prefix: "94017100", code: "9903.88.04", exclude: ["9401710001", "9401710005", "9401710006", "9401710007"], sentinel: "9401710011" },
+  { prefix: "94017900", code: "9903.88.04", exclude: ["9401790001", "9401790002", "9401790003", "9401790004"], sentinel: "9401790011" },
+  { prefix: "94018020", code: "9903.88.04", exclude: ["9401802001"], sentinel: "9401802011" },
+  { prefix: "94018040", code: "9903.88.04", exclude: ["9401804001"], sentinel: "9401804006" }
+];
+
+const section232WoodProductEntries = [
+  ...["9401.61.4011", "9401.61.4031", "9401.61.6011", "9401.61.6031"].map((displayHts) => ({
+    chapter99: "9903.76.02",
+    hts: normalizeStaticHtsDigits(displayHts),
+    displayHts,
+    context: "Upholstered wooden furniture products, as provided for in U.S. note 59 to Chapter 99.",
+    headingGroup: "9903.76.02",
+    source: "CBP Timber and Lumber Section 232 HTS List",
+    sourceUrl: section232WoodProductsSourceUrl
+  }))
+];
 
 main().catch((error) => {
   console.error(error);
@@ -266,12 +289,67 @@ async function exportChinaTariffs301Snapshot(manifest) {
     }
   }
 
+  applyChina301Note20gSnapshotOverrides(snapshot);
   await writeJson(snapshotPath, snapshot);
   manifest.counts = {
     ...(manifest.counts || {}),
     chinaTariffs301Rows: snapshot.count || snapshot.entries?.length || 0
   };
   return snapshot;
+}
+
+function applyChina301Note20gSnapshotOverrides(snapshot) {
+  if (!snapshot) {
+    return;
+  }
+  snapshot.byHts = snapshot.byHts || {};
+  snapshot.entries = Array.isArray(snapshot.entries) ? snapshot.entries : [];
+
+  for (const rule of china301Note20gSeatingOverrides) {
+    const codes = normalizeChina301Codes(snapshot.byHts[rule.prefix]);
+    if (!codes.includes(rule.code)) {
+      snapshot.byHts[rule.prefix] = [...new Set([...codes, rule.code])].sort();
+    }
+    const hasEntry = snapshot.entries.some((entry) =>
+      normalizeStaticHtsDigits(entry.hts || entry.displayHts) === rule.prefix
+      && normalizeChina301Code(entry.chapter99) === rule.code
+    );
+    if (!hasEntry) {
+      snapshot.entries.push({
+        hts: rule.prefix,
+        displayHts: formatStaticHts(rule.prefix),
+        chapter99: rule.code,
+        sourcePage: "USITC Chapter 99 note 20(g) override",
+        exclusions: rule.exclude || []
+      });
+    }
+  }
+
+  const existingSentinels = new Set((snapshot.sentinels || [])
+    .map((item) => `${normalizeStaticHtsDigits(item.exampleHts || item.hts)}|${normalizeChina301Code(item.chapter99)}`));
+  const overrideSentinels = china301Note20gSeatingOverrides
+    .flatMap((rule) => [
+      {
+        hts: rule.prefix,
+        displayHts: formatStaticHts(rule.prefix),
+        exampleHts: rule.sentinel,
+        chapter99: rule.code,
+        expected: "include",
+        note: `Chapter 99 note 20(g) inclusion override; exclusions: ${(rule.exclude || []).join(", ")}`
+      },
+      ...((rule.exclude || []).slice(0, 1).map((excluded) => ({
+        hts: rule.prefix,
+        displayHts: formatStaticHts(rule.prefix),
+        exampleHts: excluded,
+        chapter99: rule.code,
+        expected: "exclude",
+        note: `Chapter 99 note 20(g) exclusion sentinel for ${formatStaticHts(excluded)}`
+      })))
+    ])
+    .filter((item) => !existingSentinels.has(`${normalizeStaticHtsDigits(item.exampleHts)}|${normalizeChina301Code(item.chapter99)}`));
+  snapshot.sentinels = [...(snapshot.sentinels || []), ...overrideSentinels];
+  snapshot.count = snapshot.entries.length;
+  snapshot.mappedPrefixes = Object.keys(snapshot.byHts).length;
 }
 
 function buildChinaTariffs301Map(snapshot) {
@@ -354,12 +432,31 @@ const staticKnownAdditionalDutyCodeOverrides = new Map([
 function applyKnownStaticChina301Overrides(row, codes) {
   const hts = normalizeStaticHtsDigits(row?.htsno);
   const allowedCodes = staticKnownAdditionalDutyCodeOverrides.get(hts);
-  const values = [...new Set((Array.isArray(codes) ? codes : [codes]).filter(Boolean).map(String))].sort();
+  const values = new Set((Array.isArray(codes) ? codes : [codes]).filter(Boolean).map(String));
+  applyStaticChina301Note20gAdjustments(hts, values);
+  const normalizedValues = [...values].sort();
   if (!allowedCodes) {
-    return values;
+    return normalizedValues;
   }
-  const nonChinaCodes = values.filter((code) => !isStaticChina301DutyCode(code));
+  const nonChinaCodes = normalizedValues.filter((code) => !isStaticChina301DutyCode(code));
   return [...new Set([...nonChinaCodes, ...allowedCodes])].sort();
+}
+
+function applyStaticChina301Note20gAdjustments(hts, values) {
+  const digits = normalizeStaticHtsDigits(hts);
+  if (!digits) {
+    return;
+  }
+  for (const rule of china301Note20gSeatingOverrides) {
+    if (!digits.startsWith(rule.prefix)) {
+      continue;
+    }
+    if ((rule.exclude || []).some((excluded) => digits.startsWith(excluded))) {
+      values.delete(rule.code);
+    } else {
+      values.add(rule.code);
+    }
+  }
 }
 
 function validateChinaTariffs301SearchCoverage(searchRows, snapshot, diagnostics) {
@@ -369,6 +466,17 @@ function validateChinaTariffs301SearchCoverage(searchRows, snapshot, diagnostics
     const expectedCode = normalizeChina301Code(sentinel.chapter99);
     const exampleDigits = normalizeStaticHtsDigits(sentinel.exampleHts || sentinel.hts);
     const row = byDigits.get(exampleDigits);
+    if (sentinel.expected === "exclude") {
+      if (row && (row.additionalDutyCodes || []).includes(expectedCode)) {
+        diagnostics.anomalies.push({
+          hts: formatStaticHts(exampleDigits),
+          issue: "search-index-unexpected-code",
+          unexpected: [expectedCode],
+          sourceHts: sentinel.displayHts || sentinel.hts
+        });
+      }
+      continue;
+    }
     if (!expectedCode || !sourceCodes.includes(expectedCode)) {
       diagnostics.anomalies.push({
         hts: sentinel.displayHts || sentinel.hts,
@@ -464,6 +572,11 @@ async function exportSection232(manifest) {
     }
     throw error;
   });
+  data.entries = mergeStaticSection232Entries([
+    ...(data.entries || []),
+    ...section232WoodProductEntries
+  ]);
+  data.woodProductsSourceUrl = data.woodProductsSourceUrl || section232WoodProductsSourceUrl;
   await writeJson(path.join(dataDir, "section232.json"), data);
   const vehiclePartsRows = (vehicleParts.lists || []).reduce((sum, list) => sum + (list.codes?.length || 0), 0);
   manifest.counts = {
@@ -474,9 +587,28 @@ async function exportSection232(manifest) {
   setSourceState(manifest, "section232", {
     count: (data.entries?.length || 0) + vehiclePartsRows,
     url: data.sourceUrl || data.source?.url,
-    effectiveNote: `${data.effectiveNote || "CBP Metals HTS List"}；车辆零部件清单 ${vehiclePartsRows} 条。`,
+    effectiveNote: `${data.effectiveNote || "CBP Metals HTS List"}；车辆零部件清单 ${vehiclePartsRows} 条；木制品232补充 ${section232WoodProductEntries.length} 条。`,
     fetchedAt: vehicleParts.generatedAt || data.fetchedAt || now
   });
+}
+
+function mergeStaticSection232Entries(entries = []) {
+  const merged = new Map();
+  for (const entry of entries) {
+    const chapter99 = String(entry.chapter99 || "").trim();
+    const hts = normalizeStaticHtsDigits(entry.hts || entry.displayHts);
+    if (!chapter99 || !hts) {
+      continue;
+    }
+    merged.set(`${chapter99}|${hts}`, {
+      ...entry,
+      chapter99,
+      hts,
+      displayHts: entry.displayHts || formatStaticHts(hts)
+    });
+  }
+  return [...merged.values()]
+    .sort((a, b) => b.hts.length - a.hts.length || a.chapter99.localeCompare(b.chapter99));
 }
 
 async function exportPolicyRules(manifest) {
