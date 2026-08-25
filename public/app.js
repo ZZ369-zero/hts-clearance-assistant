@@ -36,7 +36,7 @@ import { rankHtsSearchCandidates } from "./search-ranking.js?v=20260729-relevanc
 import {
   describeSection232Condition,
   selectSection232MetalCandidates
-} from "./section232-metal-engine.js?v=20260825-wood-products-1";
+} from "./section232-metal-engine.js?v=20260825-wood-products-2";
 
 const section122FallbackExclusionPrefixes = [
   "84713001",
@@ -1087,6 +1087,7 @@ function renderAdditionalCodes(row) {
 }
 
 function buildAdditionalDutyRules(row, context = {}) {
+  const appliedChapter99Rules = getAppliedChapter99Rules(row, context);
   const sourceCodes = normalizeRuntimeAdditionalDutyCodes(row, [
     ...(row.additionalDutyCodes || []),
     ...getDefaultAdditionalDutyCodes(context)
@@ -1107,7 +1108,7 @@ function buildAdditionalDutyRules(row, context = {}) {
     const forcedLaborExemption = code === "9903.05.31" && !policyInactive
       ? matchForcedLaborExemptions(row.htsno, state.forcedLaborExemptions || {}, {
           referenceDate: getPolicyReferenceDate(context),
-          appliedChapter99Rules: context.appliedChapter99Rules || []
+          appliedChapter99Rules
         })
       : null;
     const exactForcedLaborExemption = forcedLaborExemption?.exact || null;
@@ -1142,6 +1143,14 @@ function buildAdditionalDutyRules(row, context = {}) {
       possibleExemptions: forcedLaborExemption?.possible || []
     };
   });
+}
+
+function getAppliedChapter99Rules(row, context = {}) {
+  return mergeSection232Matches([
+    ...getSection232WoodProductMatches(row),
+    ...(Array.isArray(context.section232Matches) ? context.section232Matches : []),
+    ...(Array.isArray(context.appliedChapter99Rules) ? context.appliedChapter99Rules : [])
+  ]).filter((match) => match.autoApply !== false && isSection232Code(match.code));
 }
 
 function renderSearchMatchMeta(match) {
@@ -1879,12 +1888,10 @@ async function loadAdditionalDuties(row) {
       ...runtimeWoodMatches,
       ...(vehicleChoice.matches || [])
     ]);
-    const appliedChapter99Rules = [
-      ...getSelectedVehicleChapter99Rules(vehicleChoice),
-      ...section232Matches.filter((match) =>
-        !match.choiceGroup && match.autoApply !== false && isSection232Code(match.code)
-      )
-    ];
+    const appliedChapter99Rules = getAppliedChapter99Rules(row, {
+      section232Matches,
+      appliedChapter99Rules: getSelectedVehicleChapter99Rules(vehicleChoice)
+    });
     const policyContext = {
       section232Matches,
       vehicleDutyChoice: vehicleChoice.selectedChoice,
@@ -1898,9 +1905,14 @@ async function loadAdditionalDuties(row) {
     if (requestId !== state.additionalDutyRequestId) {
       return;
     }
+    const fallbackSection232Matches = getSection232WoodProductMatches(row);
     rules = mergeAdditionalDutyRules([
-      ...rules,
-      {
+      ...buildAdditionalDutyRules(row, {
+        section232Matches: fallbackSection232Matches,
+        appliedChapter99Rules: getAppliedChapter99Rules(row, { section232Matches: fallbackSection232Matches })
+      }),
+      ...fallbackSection232Matches.map((match) => createSection232Rule(match)),
+      ...(fallbackSection232Matches.length ? [] : [{
         code: "232-read-error",
         label: dutyRuleCatalog["232-steel-aluminum"].label,
         shortLabel: "232",
@@ -1910,7 +1922,7 @@ async function loadAdditionalDuties(row) {
         exemptionStatus: "读取失败",
         note: error.message,
         source: "section232"
-      }
+      }])
     ]);
   }
 

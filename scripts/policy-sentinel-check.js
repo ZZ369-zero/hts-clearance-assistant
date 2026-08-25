@@ -61,6 +61,7 @@ async function main() {
   checkFdaFd1PrinterPrompt(searchIndex, fdaFlags);
   checkEpaEp5AndDoeFtcPrompts(searchIndex, epaFlags);
   checkSection232Snapshot(section232);
+  checkWoodFurnitureDutyOutcome(searchIndex, policyRules, forcedLaborExemptions, section232);
   checkSection232VehiclePartsSnapshot(section232VehicleParts);
   checkVehicleDutyChoiceOutcomes(forcedLaborExemptions, section232VehicleParts, section232);
   checkCottonSnapshot(cotton);
@@ -483,6 +484,42 @@ function checkSection232Snapshot(section232) {
       && Number(woodApplied.rate) === 25
       && !nonWoodCandidates.some((candidate) => candidate.entry.chapter99 === "9903.76.02"),
     `9401614011 raw=${[...woodRawCodes].join(",") || "none"}; applied=${woodApplied?.entry.chapter99 || "none"}; rate=${woodApplied?.rate ?? "--"}; 9401696011 candidates=${nonWoodCandidates.map((candidate) => candidate.entry.chapter99).join(",") || "none"}`
+  );
+}
+
+function checkWoodFurnitureDutyOutcome(searchIndex, policyRules, forcedLaborExemptions, section232) {
+  const target = findRowByDigits(searchIndex, "9401614011");
+  const dutyCodes = new Set(target?.additionalDutyCodes || []);
+  const forcedLaborDefault = (policyRules.rules || []).find((rule) =>
+    rule.code === "9903.05.31" && rule.defaultApply !== false && rule.autoApply !== false
+  );
+  const woodApplied = selectSection232MetalCandidates("9401614011", section232.entries || [], "Free")
+    .find((candidate) => candidate.autoApply && candidate.entry.chapter99 === "9903.76.02");
+  const forcedLaborExemption = matchForcedLaborExemptions("9401614011", forcedLaborExemptions, {
+    referenceDate: new Date("2026-08-01T00:00:00Z"),
+    appliedChapter99Rules: woodApplied
+      ? [{
+          code: woodApplied.entry.chapter99,
+          label: "232-木制品",
+          autoApply: true,
+          material: { code: "wood-products", label: "木制品" }
+        }]
+      : []
+  });
+  const estimatedAdditionalRate = (dutyCodes.has("9903.88.04") ? 25 : 0)
+    + (woodApplied ? Number(woodApplied.rate) : 0)
+    + (forcedLaborDefault && !forcedLaborExemption.exact ? Number(forcedLaborDefault.rate || 12.5) : 0);
+
+  record(
+    "9401614011 tax stack prioritizes China 301 plus wood 232 and excludes forced-labor 301",
+    dutyCodes.has("9903.88.04")
+      && Boolean(forcedLaborDefault)
+      && woodApplied?.entry.chapter99 === "9903.76.02"
+      && Number(woodApplied.rate) === 25
+      && forcedLaborExemption.exact?.code === "9903.05.90"
+      && forcedLaborExemption.exact?.triggerCode === "9903.76.02"
+      && estimatedAdditionalRate === 50,
+    `codes=${[...dutyCodes].join(",") || "none"}; defaultForcedLabor=${forcedLaborDefault?.code || "none"}; wood=${woodApplied?.entry.chapter99 || "none"}; forcedLaborExclusion=${forcedLaborExemption.exact?.code || "none"}; estimated=${estimatedAdditionalRate}%`
   );
 }
 
