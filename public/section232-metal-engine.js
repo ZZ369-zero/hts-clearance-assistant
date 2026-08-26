@@ -61,6 +61,11 @@ export function describeSection232Condition(code, baseRateText = "") {
   const baseRate = parseSimplePercent(baseRateText);
   const baseLabel = baseRate == null ? "普通税率待确认" : `普通税率 ${formatRate(baseRate)}%`;
   const descriptions = {
+    "9903.76.01": {
+      label: "232-木制品",
+      summary: "软木木材及木材产品命中 232 木制品清单，附加税 10%。",
+      note: "CBP 木材、木制品及衍生产品清单列明 4403.11.00、4403.21.01、4403.22.01、4403.23.01、4403.24.01、4403.25.01、4403.26.01、4403.99.01、4406.11.00、4406.91.00、4407.11.00、4407.12.00、4407.13.00、4407.14.00、4407.19.00。"
+    },
     "9903.76.02": {
       label: "232-木制品",
       summary: "软包木框家具命中 232 木制品清单，适用于中国等非英国、欧盟、日本来源时，附加税 25%。",
@@ -75,6 +80,31 @@ export function describeSection232Condition(code, baseRateText = "") {
       label: "232-木制品条件排除",
       summary: "未完成或特定条件下木制品分支，当前不自动计入 232 附加税。",
       note: "该分支通常需要按商品完成状态、原产国和申报说明复核。"
+    },
+    "9903.76.20": {
+      label: "232-木制品国家分支",
+      summary: "英国来源木制品分支，非中国原产默认估算项。",
+      note: "仅在原产国为英国且满足对应木制品范围时复核。"
+    },
+    "9903.76.21": {
+      label: "232-木制品国家分支",
+      summary: "日本来源木制品分支，非中国原产默认估算项。",
+      note: "仅在原产国为日本且满足对应木制品范围时复核。"
+    },
+    "9903.76.22": {
+      label: "232-木制品国家分支",
+      summary: "欧盟成员国来源木制品分支，非中国原产默认估算项。",
+      note: "仅在原产国为欧盟成员国且满足对应木制品范围时复核。"
+    },
+    "9903.76.23": {
+      label: "232-木制品国家分支",
+      summary: "韩国来源木制品分支，非中国原产默认估算项。",
+      note: "仅在原产国为韩国且满足对应木制品范围时复核。"
+    },
+    "9903.76.24": {
+      label: "232-木制品国家分支",
+      summary: "台湾地区来源木制品分支，非中国大陆原产默认估算项。",
+      note: "仅在原产地为台湾地区且满足对应木制品范围时复核。"
     },
     "9903.82.01": {
       label: "232-不含适用金属",
@@ -132,6 +162,7 @@ function isRateBranchCompatible(code, baseRate) {
 
 function rankSection232Match(entry) {
   const ranks = new Map([
+    ["9903.76.01", 100],
     ["9903.76.02", 100],
     ["9903.76.03", 100],
     ["9903.76.04", 5],
@@ -171,11 +202,14 @@ function getSection232AdditionalRate(code, baseRate) {
 }
 
 function isCountrySpecificSection232(entry) {
+  if (/^9903\.76\.(20|21|22|23|24)$/.test(entry.chapter99 || "")) {
+    return true;
+  }
   if (["9903.82.04", "9903.82.05", "9903.82.12", "9903.82.14", "9903.82.15", "9903.82.16", "9903.82.17", "9903.85.67", "9903.85.68"].includes(entry.chapter99)) {
     return true;
   }
   const text = `${entry.chapter99 || ""} ${entry.context || ""}`.toLowerCase();
-  return /united kingdom|european union|japan|russia|russian|belarus|cuba|north korea|argentina|australia|brazil|canada|mexico|general note 3\(b\)/i.test(text);
+  return /united kingdom|european union|japan|south korea|korea|taiwan|russia|russian|belarus|cuba|north korea|argentina|australia|brazil|canada|mexico|general note 3\(b\)/i.test(text);
 }
 
 function parseSimplePercent(value) {

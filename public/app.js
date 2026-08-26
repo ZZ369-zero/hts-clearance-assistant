@@ -36,7 +36,7 @@ import { rankHtsSearchCandidates } from "./search-ranking.js?v=20260729-relevanc
 import {
   describeSection232Condition,
   selectSection232MetalCandidates
-} from "./section232-metal-engine.js?v=20260825-wood-products-2";
+} from "./section232-metal-engine.js?v=20260826-wood-products-full-1";
 
 const section122FallbackExclusionPrefixes = [
   "84713001",
@@ -441,6 +441,39 @@ const china301Note20gSeatingOverrides = [
 
 const section232WoodProductRules = [
   {
+    code: "9903.76.01",
+    rate: 10,
+    prefixes: [
+      "44031100",
+      "44032101",
+      "44032201",
+      "44032301",
+      "44032401",
+      "44032501",
+      "44032601",
+      "44039901",
+      "44061100",
+      "44069100",
+      "44071100",
+      "44071200",
+      "44071300",
+      "44071400",
+      "44071900"
+    ],
+    label: "232-木制品",
+    material: {
+      code: "softwood-timber-lumber",
+      label: "软木/木材",
+      shortLabel: "木材",
+      detailLabel: "软木木材及木材产品"
+    },
+    context: "Softwood timber and lumber products, as provided for in U.S. note 37 to Chapter 99.",
+    source: "CBP Timber and Lumber Section 232 HTS List",
+    sourceUrl: "https://content.govdelivery.com/accounts/USDHSCBP/bulletins/3f69699",
+    summaryZh: "232 木制品 9903.76.01 命中软木木材及木材产品清单，适用于中国等来源时，税率 +10%。",
+    note: "CBP CSMS #66492057 / Proclamation 10976 列明该软木木材清单；需按实际木材品类及原产国复核。"
+  },
+  {
     code: "9903.76.02",
     rate: 25,
     prefixes: ["9401614011", "9401614031", "9401616011", "9401616031"],
@@ -451,11 +484,28 @@ const section232WoodProductRules = [
       shortLabel: "木制品",
       detailLabel: "软包木框家具"
     },
-    context: "Upholstered wooden furniture products, as provided for in U.S. note 59 to Chapter 99.",
+    context: "Upholstered wooden furniture products, as provided for in U.S. note 37 to Chapter 99.",
     source: "CBP Timber and Lumber Section 232 HTS List",
     sourceUrl: "https://content.govdelivery.com/accounts/USDHSCBP/bulletins/3f69699",
     summaryZh: "232 木制品 9903.76.02 命中软包木框家具清单，适用于中国等非英国、欧盟、日本来源时，税率 +25%。",
     note: "CBP CSMS #66492057 / Proclamation 10976 列明 9401.61.4011、9401.61.4031、9401.61.6011 和 9401.61.6031；英国、欧盟、日本来源需核对对应国家专属分支。"
+  },
+  {
+    code: "9903.76.03",
+    rate: 25,
+    prefixes: ["9403409060", "9403608093", "9403910080"],
+    label: "232-木制品",
+    material: {
+      code: "kitchen-cabinet-vanity-parts",
+      label: "橱柜/浴室柜及零件",
+      shortLabel: "木制品",
+      detailLabel: "厨房橱柜、浴室柜及其零件"
+    },
+    context: "Completed kitchen cabinets and vanities and their parts, as provided for in U.S. note 37 to Chapter 99.",
+    source: "CBP Timber and Lumber Section 232 HTS List",
+    sourceUrl: "https://content.govdelivery.com/accounts/USDHSCBP/bulletins/3f69699",
+    summaryZh: "232 木制品 9903.76.03 命中已完成厨房橱柜、浴室柜及其零件清单，适用于中国等非英国、欧盟、日本来源时，税率 +25%。",
+    note: "CBP CSMS #66492057 / Proclamation 10976 列明 9403.40.9060、9403.60.8093 和 9403.91.0080；若商品并非已完成橱柜、浴室柜或其零件，应复核 9903.76.04 的 0% 条件分支。"
   }
 ];
 const themeStorageKey = "hts-clearance-theme-v1";

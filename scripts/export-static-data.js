@@ -101,15 +101,71 @@ const china301Note20gSeatingOverrides = [
 ];
 
 const section232WoodProductEntries = [
+  ...[
+    "4403.11.00",
+    "4403.21.01",
+    "4403.22.01",
+    "4403.23.01",
+    "4403.24.01",
+    "4403.25.01",
+    "4403.26.01",
+    "4403.99.01",
+    "4406.11.00",
+    "4406.91.00",
+    "4407.11.00",
+    "4407.12.00",
+    "4407.13.00",
+    "4407.14.00",
+    "4407.19.00"
+  ].map((displayHts) => ({
+    chapter99: "9903.76.01",
+    hts: normalizeStaticHtsDigits(displayHts),
+    displayHts,
+    context: "Softwood timber and lumber products, as provided for in U.S. note 37 to Chapter 99.",
+    headingGroup: "9903.76.01",
+    source: "CBP Timber and Lumber Section 232 HTS List",
+    sourceUrl: section232WoodProductsSourceUrl
+  })),
   ...["9401.61.4011", "9401.61.4031", "9401.61.6011", "9401.61.6031"].map((displayHts) => ({
     chapter99: "9903.76.02",
     hts: normalizeStaticHtsDigits(displayHts),
     displayHts,
-    context: "Upholstered wooden furniture products, as provided for in U.S. note 59 to Chapter 99.",
+    context: "Upholstered wooden furniture products, as provided for in U.S. note 37 to Chapter 99.",
     headingGroup: "9903.76.02",
     source: "CBP Timber and Lumber Section 232 HTS List",
     sourceUrl: section232WoodProductsSourceUrl
-  }))
+  })),
+  ...["9403.40.9060", "9403.60.8093", "9403.91.0080"].flatMap((displayHts) => ([
+    {
+      chapter99: "9903.76.03",
+      hts: normalizeStaticHtsDigits(displayHts),
+      displayHts,
+      context: "Completed kitchen cabinets and vanities and their parts, as provided for in U.S. note 37 to Chapter 99.",
+      headingGroup: "9903.76.03",
+      source: "CBP Timber and Lumber Section 232 HTS List",
+      sourceUrl: section232WoodProductsSourceUrl
+    },
+    {
+      chapter99: "9903.76.04",
+      hts: normalizeStaticHtsDigits(displayHts),
+      displayHts,
+      context: "Products other than completed kitchen cabinets and vanities and their parts, as provided for in U.S. note 37 to Chapter 99.",
+      headingGroup: "9903.76.04",
+      source: "CBP Timber and Lumber Section 232 HTS List",
+      sourceUrl: section232WoodProductsSourceUrl
+    }
+  ])),
+  ...["9903.76.20", "9903.76.21", "9903.76.22", "9903.76.23", "9903.76.24"].flatMap((chapter99) =>
+    ["9401.61.4011", "9401.61.4031", "9401.61.6011", "9401.61.6031", "9403.40.9060", "9403.60.8093", "9403.91.0080"].map((displayHts) => ({
+      chapter99,
+      hts: normalizeStaticHtsDigits(displayHts),
+      displayHts,
+      context: `Country-specific wood products branch ${chapter99}, as provided for in U.S. note 37 to Chapter 99.`,
+      headingGroup: chapter99,
+      source: "CBP Timber and Lumber Section 232 HTS List / USITC Chapter 99",
+      sourceUrl: section232WoodProductsSourceUrl
+    }))
+  )
 ];
 
 main().catch((error) => {

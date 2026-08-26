@@ -471,6 +471,59 @@ function checkSection232Snapshot(section232) {
     `raw=${[...conveyorRawCodes].sort().join(",")}; candidates=${[...candidateCodes].sort().join(",")}; applied=${applied?.entry.chapter99 || "none"}; rate=${applied?.rate ?? "--"}`
   );
 
+  const expectedWoodEntries = [
+    ...[
+      "4403.11.00",
+      "4403.21.01",
+      "4403.22.01",
+      "4403.23.01",
+      "4403.24.01",
+      "4403.25.01",
+      "4403.26.01",
+      "4403.99.01",
+      "4406.11.00",
+      "4406.91.00",
+      "4407.11.00",
+      "4407.12.00",
+      "4407.13.00",
+      "4407.14.00",
+      "4407.19.00"
+    ].map((hts) => ["9903.76.01", cleanHts(hts)]),
+    ...["9401.61.4011", "9401.61.4031", "9401.61.6011", "9401.61.6031"]
+      .map((hts) => ["9903.76.02", cleanHts(hts)]),
+    ...["9403.40.9060", "9403.60.8093", "9403.91.0080"]
+      .flatMap((hts) => [["9903.76.03", cleanHts(hts)], ["9903.76.04", cleanHts(hts)]])
+  ];
+  const woodKeys = new Set(entries.map((entry) => `${entry.chapter99}|${cleanHts(entry.hts)}`));
+  const missingWoodEntries = expectedWoodEntries.filter(([chapter99, hts]) => !woodKeys.has(`${chapter99}|${hts}`));
+  const softwoodApplied = selectSection232MetalCandidates("4407110000", entries, "Free")
+    .find((candidate) => candidate.autoApply);
+  const cabinetCodes = ["9403409060", "9403608093", "9403910080"];
+  const cabinetOutcomes = cabinetCodes.map((hts) => {
+    const candidates = selectSection232MetalCandidates(hts, entries, "Free");
+    const applied = candidates.find((candidate) => candidate.autoApply);
+    return {
+      hts,
+      applied: applied?.entry.chapter99 || "",
+      rate: applied?.rate,
+      hasExclusionBranch: candidates.some((candidate) => candidate.entry.chapter99 === "9903.76.04" && !candidate.autoApply),
+      countryBranchesFiltered: !candidates.some((candidate) => /^9903\.76\.(20|21|22|23|24)$/.test(candidate.entry.chapter99 || ""))
+    };
+  });
+  record(
+    "section232 wood-products snapshot covers all China-relevant timber, furniture and cabinet branches",
+    missingWoodEntries.length === 0
+      && softwoodApplied?.entry.chapter99 === "9903.76.01"
+      && Number(softwoodApplied.rate) === 10
+      && cabinetOutcomes.every((item) =>
+        item.applied === "9903.76.03"
+        && Number(item.rate) === 25
+        && item.hasExclusionBranch
+        && item.countryBranchesFiltered
+      ),
+    `missing=${missingWoodEntries.map(([chapter99, hts]) => `${chapter99}/${hts}`).join(",") || "none"}; softwood=${softwoodApplied?.entry.chapter99 || "none"}:${softwoodApplied?.rate ?? "--"}; cabinets=${cabinetOutcomes.map((item) => `${item.hts}:${item.applied || "none"}:${item.rate ?? "--"}:${item.hasExclusionBranch ? "has04" : "no04"}`).join(";")}`
+  );
+
   const woodRawCodes = new Set(entries
     .filter((entry) => cleanHts(entry.hts) === "9401614011")
     .map((entry) => entry.chapter99));
@@ -520,6 +573,47 @@ function checkWoodFurnitureDutyOutcome(searchIndex, policyRules, forcedLaborExem
       && forcedLaborExemption.exact?.triggerCode === "9903.76.02"
       && estimatedAdditionalRate === 50,
     `codes=${[...dutyCodes].join(",") || "none"}; defaultForcedLabor=${forcedLaborDefault?.code || "none"}; wood=${woodApplied?.entry.chapter99 || "none"}; forcedLaborExclusion=${forcedLaborExemption.exact?.code || "none"}; estimated=${estimatedAdditionalRate}%`
+  );
+
+  const cabinetCodes = ["9403409060", "9403608093", "9403910080"];
+  const cabinetOutcomes = cabinetCodes.map((hts) => {
+    const row = findRowByDigits(searchIndex, hts);
+    const codes = new Set(row?.additionalDutyCodes || []);
+    const applied = selectSection232MetalCandidates(hts, section232.entries || [], row?.general || "Free")
+      .find((candidate) => candidate.autoApply && candidate.entry.chapter99 === "9903.76.03");
+    const exemption = matchForcedLaborExemptions(hts, forcedLaborExemptions, {
+      referenceDate: new Date("2026-08-01T00:00:00Z"),
+      appliedChapter99Rules: applied
+        ? [{
+            code: applied.entry.chapter99,
+            label: "232-木制品",
+            autoApply: true,
+            material: { code: "wood-products", label: "木制品" }
+          }]
+        : []
+    });
+    const estimated = (codes.has("9903.88.03") ? 25 : 0)
+      + (applied ? Number(applied.rate) : 0)
+      + (forcedLaborDefault && !exemption.exact ? Number(forcedLaborDefault.rate || 12.5) : 0);
+    return {
+      hts,
+      hasChina301: codes.has("9903.88.03"),
+      wood: applied?.entry.chapter99 || "",
+      rate: applied?.rate,
+      exclusion: exemption.exact?.code || "",
+      estimated
+    };
+  });
+  record(
+    "9403 cabinet and vanity wood-product codes default to China 301 plus 232 wood, excluding forced-labor 301",
+    cabinetOutcomes.every((item) =>
+      item.hasChina301
+      && item.wood === "9903.76.03"
+      && Number(item.rate) === 25
+      && item.exclusion === "9903.05.90"
+      && item.estimated === 50
+    ),
+    cabinetOutcomes.map((item) => `${item.hts}:301=${item.hasChina301 ? "yes" : "no"};wood=${item.wood || "none"};exclusion=${item.exclusion || "none"};estimated=${item.estimated}%`).join(" | ")
   );
 }
 
