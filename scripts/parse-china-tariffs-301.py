@@ -14,9 +14,16 @@ from pypdf import PdfReader
 
 
 SOURCE_URL = "https://hts.usitc.gov/reststop/file?filename=China+Tariffs&release=currentRelease"
-ROW_PATTERN = re.compile(r"\b(\d{4}\.\d{2}\.\d{2})\s+(9903\.(?:88|91|92)\.\d{2})\b")
-SENTINEL_HTS = "39249056"
-SENTINEL_CHAPTER99 = "9903.88.15"
+ROW_PATTERN = re.compile(r"\b(\d{4}\.\d{2}\.(?:\d{2}|\d{4}))\s+(9903\.(?:88|91|92)\.\d{2})\b")
+SENTINEL_MAPPINGS = [
+    ("39249056", "3924.90.56", "9903.88.15", "3924905650"),
+    ("2931909010", "2931.90.9010", "9903.88.04", "2931909010"),
+    ("4901990010", "4901.99.0010", "9903.88.15", "4901990010"),
+    ("6307909842", "6307.90.9842", "9903.91.07", "6307909842"),
+    ("8517620010", "8517.62.0010", "9903.88.04", "8517620010"),
+    ("9401806030", "9401.80.6030", "9903.88.04", "9401806030"),
+    ("9403704031", "9403.70.4031", "9903.88.04", "9403704031"),
+]
 
 
 def fetch_pdf() -> bytes:
@@ -73,8 +80,14 @@ def main() -> int:
     by_hts = build_by_hts(entries)
     if len(entries) < 10000:
         raise RuntimeError(f"USITC China Tariffs parse returned too few rows: {len(entries)}")
-    if SENTINEL_CHAPTER99 not in by_hts.get(SENTINEL_HTS, []):
-        raise RuntimeError(f"Missing sentinel mapping {SENTINEL_HTS} -> {SENTINEL_CHAPTER99}")
+    missing_sentinels = [
+        (hts, chapter99)
+        for hts, _display_hts, chapter99, _example_hts in SENTINEL_MAPPINGS
+        if chapter99 not in by_hts.get(hts, [])
+    ]
+    if missing_sentinels:
+        details = ", ".join(f"{hts} -> {chapter99}" for hts, chapter99 in missing_sentinels)
+        raise RuntimeError(f"Missing China Tariffs sentinel mapping(s): {details}")
 
     snapshot = {
         "generatedAt": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
@@ -86,11 +99,12 @@ def main() -> int:
         "byHts": by_hts,
         "sentinels": [
             {
-                "hts": SENTINEL_HTS,
-                "displayHts": "3924.90.56",
-                "chapter99": SENTINEL_CHAPTER99,
-                "exampleHts": "3924905650",
+                "hts": hts,
+                "displayHts": display_hts,
+                "chapter99": chapter99,
+                "exampleHts": example_hts,
             }
+            for hts, display_hts, chapter99, example_hts in SENTINEL_MAPPINGS
         ],
     }
     json.dump(snapshot, sys.stdout, ensure_ascii=False, indent=2)

@@ -253,13 +253,38 @@ function checkChinaTariffs301(manifest, searchIndex, snapshot) {
     `row=${row?.htsno || "missing"}; additionalDutyCodes=${[...rowCodes].join(",") || "none"}; syncStatus=${source?.state?.status || "missing"}; message=${source?.state?.message || ""}`
   );
 
+  const chinaTariffSentinelFailures = (snapshot.sentinels || [])
+    .filter((sentinel) => sentinel.expected !== "exclude")
+    .map((sentinel) => {
+      const sourceHts = cleanHts(sentinel.hts || sentinel.displayHts);
+      const expectedCode = normalizeChina301Code(sentinel.chapter99);
+      const exampleDigits = cleanHts(sentinel.exampleHts || sentinel.hts);
+      const sentinelSourceCodes = new Set((snapshot.byHts?.[sourceHts] || []).map(normalizeChina301Code).filter(Boolean));
+      const targetRow = findRowByDigits(searchIndex, exampleDigits);
+      const targetCodes = new Set((targetRow?.additionalDutyCodes || []).map(normalizeChina301Code).filter(Boolean));
+      return {
+        sourceHts,
+        exampleDigits,
+        expectedCode,
+        sourceOk: Boolean(expectedCode && sentinelSourceCodes.has(expectedCode)),
+        rowOk: Boolean(targetRow && expectedCode && targetCodes.has(expectedCode))
+      };
+    })
+    .filter((item) => !item.sourceOk || !item.rowOk);
+  record(
+    "China Tariffs PDF sentinels reach searchable HTS rows",
+    chinaTariffSentinelFailures.length === 0 || sourceWarningSurfaced,
+    `failures=${chinaTariffSentinelFailures.map((item) => `${formatHts(item.exampleDigits)}=>${item.expectedCode || "missing-code"}:${item.sourceOk ? "source" : "source-missing"}/${item.rowOk ? "row" : "row-missing"}`).join("; ") || "none"}; syncStatus=${source?.state?.status || "missing"}`
+  );
+
   const seatingIncludes = [
     ["9401614011", "9401.61.40.11 upholstered wooden household seats"],
     ["9401696011", "9401.69.60.11 wooden household seats"],
     ["9401710011", "9401.71.00 seating"],
     ["9401790011", "9401.79.00 seating"],
     ["9401802011", "9401.80.20 seating"],
-    ["9401804006", "9401.80.40 seating"]
+    ["9401804006", "9401.80.40 seating"],
+    ["9401806030", "9401.80.60.30 seating"]
   ];
   const missingSeatingIncludes = seatingIncludes.filter(([digits]) => {
     const targetRow = findRowByDigits(searchIndex, digits);
@@ -277,7 +302,9 @@ function checkChinaTariffs301(manifest, searchIndex, snapshot) {
     "9401710001",
     "9401790001",
     "9401802001",
-    "9401804001"
+    "9401804001",
+    "9401806021",
+    "9401806023"
   ];
   const unexpectedExclusions = seatingExclusions.filter((digits) => {
     const targetRow = findRowByDigits(searchIndex, digits);
@@ -829,6 +856,19 @@ function parseDate(value) {
 
 function normalizeCodeSet(codes = []) {
   return new Set((codes || []).map(cleanHts).filter(Boolean));
+}
+
+function normalizeChina301Code(value) {
+  const text = String(value || "").trim();
+  const dotted = text.match(/\b9903\.(?:88|91|92)\.\d{2}\b/);
+  if (dotted) {
+    return dotted[0];
+  }
+  const digits = cleanHts(text);
+  if (/^9903(?:88|91|92)\d{2}$/.test(digits)) {
+    return `${digits.slice(0, 4)}.${digits.slice(4, 6)}.${digits.slice(6, 8)}`;
+  }
+  return "";
 }
 
 function cleanHts(value) {
