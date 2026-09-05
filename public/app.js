@@ -384,6 +384,19 @@ const vehiclePartsSection232Options = [
     context: "Automobile parts, as provided for in U.S. note 33 to Chapter 99."
   },
   {
+    listId: "automobile",
+    code: "9903.94.06",
+    rate: 0,
+    autoApply: false,
+    choiceGroup: "vehicle-parts-section232",
+    choiceRank: 1.5,
+    label: "232-汽车零配件条件免加征",
+    materialCode: "automobile-parts-zero-duty",
+    materialLabel: "USMCA/非乘用轻卡条件",
+    shortLabel: "232免加征",
+    context: "Articles provided for in U.S. note 33(h) to Chapter 99, including qualifying USMCA entries or listed articles not used as passenger automobile or light truck parts."
+  },
+  {
     listId: "mhdv",
     code: "9903.74.08",
     rate: 25,
@@ -1357,7 +1370,7 @@ function getTemporary122Choice(row, context = {}) {
   return {
     exemptionStatus: "多选1",
     summaryZh: "122 临时关税与车辆零配件 232 项存在多选一关系；当前列出 9903.03.01 但不自动计入，请按实际车型/零配件适用项选择。",
-    note: "如适用 232-汽车零配件 9903.94.05 或 232-重型汽车零配件 9903.74.08，不应同时叠加 122 临时关税；如车辆 232 项不适用，可人工选择 122。"
+    note: "如适用 232-汽车零配件 9903.94.05、9903.94.06 或 232-重型汽车零配件 9903.74.08，不应同时叠加 122 临时关税；如车辆 232 项不适用，可人工选择 122。"
   };
 }
 
@@ -2270,9 +2283,15 @@ function renderAdditionalDutyItem(item, parsed, rule, applied) {
     : parsed.auto && parsed.rate > 0
     ? `+${parsed.rate}%`
     : isSection232ZeroRate
-    ? "0% 条件项"
+    ? "0% 条件免加征"
     : "需人工确认";
-  const applyLabel = rule.exempt ? "豁免，未计入估算" : applied ? "已计入估算" : "未自动计入";
+  const applyLabel = rule.exempt
+    ? "豁免，未计入估算"
+    : isSection232ZeroRate && rule.choiceSelected
+      ? "已选择0%条件分支"
+      : applied
+        ? "已计入估算"
+        : "未自动计入";
   const englishLine = rule.summaryZh ? "" : `<p class="en-line">${escapeHtml(item.description || "--")}</p>`;
   const exemptionBasis = rule.exempt && rule.exemptionCode
     ? `<small class="additional-duty-exemption-basis"><strong>排除依据：</strong>${escapeHtml(rule.exemptionCode)}${rule.exemptionMatchedHts ? ` · 命中 HTS ${escapeHtml(rule.exemptionMatchedHts)}` : ""}</small>`
@@ -2297,6 +2316,7 @@ function renderRestrictionItem(item, parsed, rule, applied) {
   const displayCode = item.htsno || rule.code || "Chapter 99";
   const code = isSection232Miss ? "未命中" : compactChapter99Code(displayCode);
   const isSection232ZeroRate = rule.source === "section232" && parsed.auto && parsed.rate === 0;
+  const selectedZeroRateChoice = isSection232ZeroRate && Boolean(rule.choiceSelected);
   const rateLabel = rule.exempt
     ? parsed.auto && parsed.rate > 0
       ? `${formatRateNumber(parsed.rate)}%`
@@ -2317,6 +2337,8 @@ function renderRestrictionItem(item, parsed, rule, applied) {
     : isChoiceOption
     ? choiceSelected && applied
       ? "当前计入"
+      : selectedZeroRateChoice
+        ? "当前选择"
       : choiceSelected
         ? "已选择·未计入"
         : "备选未计入"
@@ -2386,6 +2408,7 @@ function renderRestrictionChoiceGroup(options) {
   const selected = options.find((option) => option.rule.choiceSelected);
   const selectedCode = selected?.rule.code || "";
   const selectedRate = selected?.rule.rate == null ? "" : `${formatRateNumber(selected.rule.rate)}%`;
+  const selectedIsZeroRate = selected?.rule.source === "section232" && Number(selected.rule.rate) === 0;
   const selectedLabel = selected
     ? `${selected.rule.label} ${compactChapter99Code(selectedCode)} ${selectedRate}`.trim()
     : "尚未选择";
@@ -2393,11 +2416,13 @@ function renderRestrictionChoiceGroup(options) {
     ? selected.applied
       ? `当前按非车辆零部件用途计入 ${selectedLabel}；车辆232候选项不计入。`
       : `当前选择非车辆零部件用途，但 ${selectedLabel} 另有排除规则，暂不计入。`
+    : selectedIsZeroRate
+      ? `当前选择 ${selectedLabel}，该分支为232条件免加征，估算不计入额外税率。`
     : selected
       ? `当前按实际车型计入 ${selectedLabel}；新301强迫劳动税由 9903.05.90 排除。`
       : "当前未自动计入候选项，请按商品实际用途选择。";
   const choiceLabel = formatChoiceCount(options.length);
-  const help = "新301强迫劳动税与下列车辆零部件 Section 232 税项按商品实际用途择一；选择车辆232时，9903.05.90 会排除新301税项。";
+  const help = "新301强迫劳动税与车辆零部件 Section 232 税项按商品用途、车型或USMCA资格择一；9903.94.06 为条件免加征分支，选择车辆232时 9903.05.90 会排除新301税项。";
 
   return `
     <div class="restriction-choice-group" role="radiogroup" aria-label="新301与车辆零配件232税项择一">
@@ -3568,8 +3593,10 @@ function buildVehiclePartsSection232Matches(hts, normalized = normalizeStaticHts
       alternatives: options.length,
       source: list?.name || "USITC Chapter 99",
       sourceUrl: list?.url || "",
-      summaryZh: `${option.label} ${option.code} 命中 CBP 官方车辆零部件清单 ${displayMatch}，税率 +${option.rate}%；须按实际适用车型选择。`,
-      note: `${option.context} 与其他车辆零部件 232 项按实际车型互斥选择；${option.autoApply === false ? "作为中重型车辆条件候选列示，不默认计入。" : "当前默认按乘用车/轻型卡车零部件计入估算；非该类车辆应改选相应零税率或中重型车辆条款。"}`
+      summaryZh: option.rate === 0
+        ? `${option.label} ${option.code} 命中 CBP 官方车辆零部件清单 ${displayMatch}，本分支不另加 232 附加税；须按USMCA资格或非乘用车/轻型卡车零件条件复核。`
+        : `${option.label} ${option.code} 命中 CBP 官方车辆零部件清单 ${displayMatch}，税率 +${option.rate}%；须按实际适用车型选择。`,
+      note: `${option.context} 与其他车辆零部件 232 项按实际申报条件互斥选择；${option.rate === 0 ? "作为 0% 条件免加征候选列示，不默认计入。" : option.autoApply === false ? "作为中重型车辆条件候选列示，不默认计入。" : "当前默认按乘用车/轻型卡车零部件计入估算；非该类车辆应改选相应零税率或中重型车辆条款。"}`
     };
   });
 }

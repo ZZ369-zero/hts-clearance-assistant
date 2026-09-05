@@ -90,6 +90,19 @@ const vehiclePartsSection232Options = [
     context: "Automobile parts, as provided for in U.S. note 33 to Chapter 99."
   },
   {
+    listId: "automobile",
+    code: "9903.94.06",
+    rate: 0,
+    autoApply: false,
+    choiceGroup: "vehicle-parts-section232",
+    choiceRank: 1.5,
+    label: "232-汽车零配件条件免加征",
+    materialCode: "automobile-parts-zero-duty",
+    materialLabel: "USMCA/非乘用轻卡条件",
+    shortLabel: "232免加征",
+    context: "Articles provided for in U.S. note 33(h) to Chapter 99, including qualifying USMCA entries or listed articles not used as passenger automobile or light truck parts."
+  },
+  {
     listId: "mhdv",
     code: "9903.74.08",
     rate: 25,
@@ -2631,14 +2644,16 @@ function buildVehiclePartsSection232Matches(hts, normalized = normalizeHtsDigits
       alternatives: options.length,
       source: list?.name || "USITC Chapter 99",
       sourceUrl: list?.url || "",
-      summaryZh: `${option.label} ${option.code} 命中 CBP 官方车辆零部件清单 ${displayMatch}，税率 +${option.rate}%；须按实际适用车型选择。`,
-      note: `${option.context} 与其他车辆零部件 232 项按实际车型互斥选择；${option.autoApply === false ? "作为中重型车辆条件候选列示，不默认计入。" : "当前默认按乘用车/轻型卡车零部件计入估算；非该类车辆应改选相应零税率或中重型车辆条款。"}`
+      summaryZh: option.rate === 0
+        ? `${option.label} ${option.code} 命中 CBP 官方车辆零部件清单 ${displayMatch}，本分支不另加 232 附加税；须按USMCA资格或非乘用车/轻型卡车零件条件复核。`
+        : `${option.label} ${option.code} 命中 CBP 官方车辆零部件清单 ${displayMatch}，税率 +${option.rate}%；须按实际适用车型选择。`,
+      note: `${option.context} 与其他车辆零部件 232 项按实际申报条件互斥选择；${option.rate === 0 ? "作为 0% 条件免加征候选列示，不默认计入。" : option.autoApply === false ? "作为中重型车辆条件候选列示，不默认计入。" : "当前默认按乘用车/轻型卡车零部件计入估算；非该类车辆应改选相应零税率或中重型车辆条款。"}`
     };
   });
 }
 
 function isSection232Chapter99(code) {
-  return /^(9903\.(76|80|81|82|83|84|85)\.\d{2}|9903\.(94\.05|74\.08))$/.test(code);
+  return /^(9903\.(76|80|81|82|83|84|85)\.\d{2}|9903\.(94\.05|94\.06|74\.08))$/.test(code);
 }
 
 function classifySection232Material(entry) {

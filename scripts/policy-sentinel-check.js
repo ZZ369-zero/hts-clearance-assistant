@@ -711,16 +711,48 @@ function checkVehicleDutyChoiceOutcomes(forcedLaborExemptions, snapshot, section
     `selected=${nonVehicleChoice.selectedChoice}; exclusion=${nonVehicleExemption.exact?.code || "none"}`
   );
 
+  const autoZeroChoice = resolveVehiclePartsDutyChoice(sampleMatches, "9903.94.06");
+  const autoZeroRules = getSelectedVehicleChapter99Rules(autoZeroChoice);
+  const autoZeroExemption = matchForcedLaborExemptions("8512202080", forcedLaborExemptions, {
+    referenceDate: new Date("2026-08-01T00:00:00Z"),
+    appliedChapter99Rules: autoZeroRules
+  });
+  record(
+    "vehicle-parts choices include 9903.94.06 as a zero-duty conditional auto-parts branch",
+    autoZeroChoice.selectedChoice === "9903.94.06"
+      && autoZeroRules.length === 1
+      && autoZeroRules[0].code === "9903.94.06"
+      && Number(autoZeroRules[0].rate) === 0
+      && autoZeroExemption.exact?.code === "9903.05.90"
+      && autoZeroExemption.exact?.triggerCode === "9903.94.06",
+    `selected=${autoZeroChoice.selectedChoice}; applied=${autoZeroRules.map((item) => `${item.code}:${item.rate}`).join(",") || "none"}; exclusion=${autoZeroExemption.exact?.code || "none"}; trigger=${autoZeroExemption.exact?.triggerCode || "none"}`
+  );
+
+  const keyboardChoice = resolveVehiclePartsDutyChoice(
+    buildVehicleChoiceMatches("84716020", automobileCodes, mhdvCodes),
+    "9903.94.06"
+  );
+  const keyboardRules = getSelectedVehicleChapter99Rules(keyboardChoice);
+  record(
+    "8471602000 can surface 9903.94.06 instead of only the taxable 9903.94.05 branch",
+    automobileCodes.has("8471")
+      && keyboardChoice.selectedChoice === "9903.94.06"
+      && keyboardRules.length === 1
+      && keyboardRules[0].code === "9903.94.06"
+      && Number(keyboardRules[0].rate) === 0,
+    `automobileHas8471=${automobileCodes.has("8471")}; selected=${keyboardChoice.selectedChoice}; applied=${keyboardRules.map((item) => `${item.code}:${item.rate}`).join(",") || "none"}`
+  );
+
   const overlapFailures = overlapCodes.filter((code) => {
     const resolution = resolveVehiclePartsDutyChoice(buildVehicleChoiceMatches(code, automobileCodes, mhdvCodes));
     const exemption = matchForcedLaborExemptions(code, forcedLaborExemptions, {
       referenceDate: new Date("2026-08-01T00:00:00Z"),
       appliedChapter99Rules: getSelectedVehicleChapter99Rules(resolution)
     });
-    return resolution.optionCount !== 3 || exemption.exact?.code !== "9903.05.90";
+    return resolution.optionCount !== 4 || exemption.exact?.code !== "9903.05.90";
   });
   record(
-    "all overlapping official vehicle-parts HTS candidates receive three-way choice logic",
+    "all overlapping official vehicle-parts HTS candidates receive all vehicle choice logic",
     overlapCodes.length >= 80 && overlapFailures.length === 0,
     `overlap=${overlapCodes.length}; failures=${overlapFailures.slice(0, 8).join(",") || "none"}`
   );
@@ -780,6 +812,14 @@ function buildVehicleChoiceMatches(hts, automobileCodes, mhdvCodes) {
       choiceGroup: "vehicle-parts-section232",
       choiceRank: 1,
       label: "232-汽车零配件"
+    });
+    matches.push({
+      code: "9903.94.06",
+      rate: 0,
+      autoApply: false,
+      choiceGroup: "vehicle-parts-section232",
+      choiceRank: 1.5,
+      label: "232-汽车零配件条件免加征"
     });
   }
   if ([...mhdvCodes].some((code) => digits.startsWith(code) || code.startsWith(digits))) {
