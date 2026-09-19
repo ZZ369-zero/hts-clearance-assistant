@@ -1581,6 +1581,74 @@ function mergeAdditionalDutyRules(rules) {
   return [...merged.values()];
 }
 
+function applyChapter99ExclusionRules(rules, rowsByCode) {
+  const exclusionCodes = new Set(
+    rules
+      .map((rule) => rule.code)
+      .filter((code) => isUstr301ExclusionHeading(rowsByCode.get(code), code))
+  );
+  if (!exclusionCodes.size) {
+    return rules;
+  }
+
+  return rules.map((rule) => {
+    const code = rule.code || "";
+    const row = rowsByCode.get(code);
+    if (exclusionCodes.has(code)) {
+      return {
+        ...rule,
+        label: "301-USTR排除",
+        shortLabel: "301排除",
+        rate: null,
+        autoApply: false,
+        exempt: true,
+        exemptionCode: code,
+        exemptionHeading: `${compactChapter99Code(code)} 产品排除已命中`,
+        exemptionStatus: "已排除",
+        exemptionSourceUrl: getChapter99SearchUrl(code),
+        summaryZh: `${code} 为 USTR 授予的 301 产品排除项；命中时仅适用原商品税率，不叠加对应 301 加征。`,
+        note: "请复核商品描述、原产国、申报日期和 U.S. note 20 对应排除范围。"
+      };
+    }
+
+    const excludedBy = findChapter99ExclusionReference(row, exclusionCodes);
+    if (!excludedBy) {
+      return rule;
+    }
+
+    return {
+      ...rule,
+      autoApply: false,
+      exclusionApplies: true,
+      exemptionCode: excludedBy,
+      exemptionHeading: `${compactChapter99Code(excludedBy)} 排除 ${compactChapter99Code(code)} 加征`,
+      exemptionStatus: "已排除",
+      exemptionSourceUrl: getChapter99SearchUrl(excludedBy),
+      summaryZh: `${code} 301 加征项被 ${excludedBy} 产品排除覆盖，当前不计入估算。`,
+      note: `${excludedBy} 为 USTR 授予的产品排除项；${code} 描述中列明 “Except as provided” 的排除关系。请按商品描述和申报日期复核。`
+    };
+  });
+}
+
+function isUstr301ExclusionHeading(row, code) {
+  if (!/^9903\.88\.\d{2}$/.test(String(code || ""))) {
+    return false;
+  }
+  const description = `${row?.description || ""} ${row?.descriptionZh || ""}`;
+  const general = String(row?.general || "");
+  return /covered by an exclusion|exclusion granted by the U\.S\. Trade Representative|产品排除/i.test(description)
+    && !/\+\s*\d+(?:\.\d+)?\s*%/.test(general);
+}
+
+function findChapter99ExclusionReference(row, exclusionCodes) {
+  const description = `${row?.description || ""} ${row?.descriptionZh || ""}`;
+  return [...exclusionCodes].find((code) => description.includes(code)) || "";
+}
+
+function getChapter99SearchUrl(code) {
+  return `https://hts.usitc.gov/search?query=${encodeURIComponent(code)}`;
+}
+
 function mergeAdditionalDutyBreakdown(items) {
   const merged = new Map();
   for (const item of items) {
@@ -2034,6 +2102,7 @@ async function loadAdditionalDuties(row) {
     }
 
     const rowsByCode = new Map((data.value || []).map((item) => [item.htsno, item]));
+    rules = applyChapter99ExclusionRules(rules, rowsByCode);
 
     let additionalRate = 0;
     const additionalDutyBreakdown = [];
@@ -2280,6 +2349,10 @@ function renderAdditionalDutyItem(item, parsed, rule, applied) {
     ? parsed.auto && parsed.rate > 0
       ? `${formatRateNumber(parsed.rate)}% 已豁免`
       : "豁免"
+    : rule.exclusionApplies
+    ? parsed.auto && parsed.rate > 0
+      ? `${formatRateNumber(parsed.rate)}% 不计入`
+      : "已排除"
     : parsed.auto && parsed.rate > 0
     ? `+${parsed.rate}%`
     : isSection232ZeroRate
@@ -2287,6 +2360,8 @@ function renderAdditionalDutyItem(item, parsed, rule, applied) {
     : "需人工确认";
   const applyLabel = rule.exempt
     ? "豁免，未计入估算"
+    : rule.exclusionApplies
+      ? "已排除，未计入估算"
     : isSection232ZeroRate && rule.choiceSelected
       ? "已选择0%条件分支"
       : applied
@@ -2321,6 +2396,10 @@ function renderRestrictionItem(item, parsed, rule, applied) {
     ? parsed.auto && parsed.rate > 0
       ? `${formatRateNumber(parsed.rate)}%`
       : "豁免"
+    : rule.exclusionApplies
+    ? parsed.auto && parsed.rate > 0
+      ? `${formatRateNumber(parsed.rate)}% 不计入`
+      : "已排除"
     : isSection232Miss
     ? "不适用"
     : parsed.auto && parsed.rate > 0
@@ -2334,6 +2413,8 @@ function renderRestrictionItem(item, parsed, rule, applied) {
     ? choiceSelected
       ? "已选择·另有排除"
       : "已豁免"
+    : rule.exclusionApplies
+    ? "已排除"
     : isChoiceOption
     ? choiceSelected && applied
       ? "当前计入"
@@ -2347,8 +2428,8 @@ function renderRestrictionItem(item, parsed, rule, applied) {
   const materialBadge = rule.material?.shortLabel
     ? `<em class="material-badge">${escapeHtml(rule.material.shortLabel)}</em>`
     : "";
-  const exemptionDetails = renderForcedLaborExemptionDetails(rule);
-  const exemptionSummary = rule.exempt && rule.exemptionCode
+  const exemptionDetails = renderExemptionDetails(rule);
+  const exemptionSummary = (rule.exempt || rule.exclusionApplies) && rule.exemptionCode
     ? `
       <div class="restriction-exemption-summary">
         <span><strong>排除依据</strong> ${escapeHtml(compactChapter99Code(rule.exemptionCode))}</span>
@@ -2365,7 +2446,7 @@ function renderRestrictionItem(item, parsed, rule, applied) {
     <div class="restriction-item ${applied ? "applied" : "not-applied"}${isChoiceOption ? " choice-option" : ""}">
       ${choiceControl}
       <div class="restriction-main">
-        <strong>${escapeHtml(rule.label)}${rule.exempt ? "（征税依据）" : ""}:</strong>
+        <strong>${escapeHtml(rule.label)}${rule.exempt || rule.exclusionApplies ? "（征税依据）" : ""}:</strong>
         ${materialBadge}
         <span>${escapeHtml(code)}</span>
         <b>${escapeHtml(rateLabel)}</b>
@@ -2454,16 +2535,19 @@ function handleVehicleDutyChoiceChange(event) {
   loadAdditionalDuties(state.selected);
 }
 
-function renderForcedLaborExemptionDetails(rule) {
+function renderExemptionDetails(rule) {
   const possible = rule.possibleExemptions || [];
-  if (!rule.exempt && !possible.length) {
+  const hasExactExclusion = rule.exempt || rule.exclusionApplies;
+  if (!hasExactExclusion && !possible.length) {
     return "";
   }
 
-  const heading = rule.exempt
+  const heading = rule.exemptionHeading || (rule.exempt
     ? `${rule.exemptionCode} 排除条款详情`
-    : `${possible.length} 项可能排除规则待核`;
-  const exactItem = rule.exempt
+    : rule.exclusionApplies
+    ? `${rule.exemptionCode} 已排除本项加征`
+    : `${possible.length} 项可能排除规则待核`);
+  const exactItem = hasExactExclusion
     ? `
       <li>
         <strong>${escapeHtml(rule.exemptionCode)}</strong>
@@ -2472,7 +2556,7 @@ function renderForcedLaborExemptionDetails(rule) {
       </li>
     `
     : "";
-  const possibleItems = (rule.exempt ? [] : possible)
+  const possibleItems = (hasExactExclusion ? [] : possible)
     .map((item) => `
       <li>
         <strong>${escapeHtml(item.code)} ${escapeHtml(item.titleZh || "")}</strong>
@@ -2482,7 +2566,7 @@ function renderForcedLaborExemptionDetails(rule) {
     `)
     .join("");
   const sourceLink = rule.exemptionSourceUrl
-    ? `<a href="${escapeHtml(rule.exemptionSourceUrl)}" target="_blank" rel="noopener noreferrer">打开CBP官方说明</a>`
+    ? `<a href="${escapeHtml(rule.exemptionSourceUrl)}" target="_blank" rel="noopener noreferrer">打开官方说明</a>`
     : "";
 
   return `

@@ -57,6 +57,7 @@ async function main() {
   checkLaptop122Outcome(searchIndex, section122);
   checkRelatedAnnexIiElectronics(section122);
   checkTextile6307909891Outcome(searchIndex);
+  checkHeater8516290090Outcome(searchIndex);
   checkCertificationPrompt(searchIndex, fdaFlags);
   checkFdaFd1PrinterPrompt(searchIndex, fdaFlags);
   checkEpaEp5AndDoeFtcPrompts(searchIndex, epaFlags);
@@ -155,6 +156,9 @@ function checkForcedLaborExemptions(snapshot) {
   const match = matchForcedLaborExemptions("8524911000", snapshot, {
     referenceDate: new Date("2026-07-29T00:00:00Z")
   });
+  const informationMaterials = matchForcedLaborExemptions("4911912020", snapshot, {
+    referenceDate: new Date("2026-07-29T00:00:00Z")
+  });
   const transitRule = snapshot.rules?.["9903.05.85"];
   const currentRulesWithoutDates = Object.values(snapshot.rules || {})
     .filter((rule) => rule.code !== "9903.05.85" && rule.effectiveTo);
@@ -167,6 +171,11 @@ function checkForcedLaborExemptions(snapshot) {
       && match.exact.matchedHts === "8524.91.10"
     ),
     `exact=${match.exact?.code || "none"}; matchedHts=${match.exact?.matchedHts || "none"}; possible=${match.possible.map((item) => item.code).join(",") || "none"}`
+  );
+  record(
+    "4911912020 surfaces 9903.05.92 information materials exclusion prompt",
+    informationMaterials.possible.some((item) => item.code === "9903.05.92"),
+    `exact=${informationMaterials.exact?.code || "none"}; possible=${informationMaterials.possible.map((item) => item.code).join(",") || "none"}`
   );
   record(
     "9903.05.85 keeps real July 28 expiry and is archived",
@@ -355,6 +364,16 @@ function checkTextile6307909891Outcome(searchIndex) {
   record(
     "6307.90.98.91 keeps current China 301 mapping without inherited 9903.91.01",
     Boolean(row && codes.has("9903.88.15") && codes.has("9903.88.69") && !codes.has("9903.91.01") && !codes.has("9903.91.07")),
+    `row=${row?.htsno || "missing"}; additionalDutyCodes=${[...codes].join(",") || "none"}`
+  );
+}
+
+function checkHeater8516290090Outcome(searchIndex) {
+  const row = findRowByDigits(searchIndex, "8516290090");
+  const codes = new Set(row?.additionalDutyCodes || []);
+  record(
+    "8516.29.00.90 keeps USTR 301 exclusion 9903.88.69 alongside base duty",
+    Boolean(row && codes.has("9903.88.69") && codes.has("9903.88.03")),
     `row=${row?.htsno || "missing"}; additionalDutyCodes=${[...codes].join(",") || "none"}`
   );
 }

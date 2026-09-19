@@ -3367,9 +3367,10 @@ function mergeInheritedFields(row, parent) {
   return row;
 }
 
-// USITC China Tariffs lists these 6307.90.98 suffixes explicitly; do not
-// let the broader parent HTS footnote over-inherit stale China 301 codes.
+// USITC China Tariffs and Chapter 99 exclusion headings list these exact
+// suffixes explicitly; avoid broad parent inheritance or missing exclusions.
 const knownAdditionalDutyCodeOverrides = new Map([
+  ["8516290090", new Set(["9903.88.03", "9903.88.69"])],
   ["6307909825", new Set(["9903.88.15"])],
   ["6307909835", new Set(["9903.88.15"])],
   ["6307909842", new Set(["9903.91.07"])],
