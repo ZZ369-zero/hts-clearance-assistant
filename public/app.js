@@ -1581,7 +1581,7 @@ function mergeAdditionalDutyRules(rules) {
   return [...merged.values()];
 }
 
-function applyChapter99ExclusionRules(rules, rowsByCode) {
+function applyChapter99ExclusionRules(rules, rowsByCode, subjectRow = null) {
   const exclusionCodes = new Set(
     rules
       .map((rule) => rule.code)
@@ -1591,43 +1591,39 @@ function applyChapter99ExclusionRules(rules, rowsByCode) {
     return rules;
   }
 
-  return rules.map((rule) => {
+  const nextRules = [];
+  for (const rule of rules) {
     const code = rule.code || "";
     const row = rowsByCode.get(code);
     if (exclusionCodes.has(code)) {
-      return {
-        ...rule,
-        label: "301-USTR排除",
-        shortLabel: "301排除",
-        rate: null,
-        autoApply: false,
-        exempt: true,
-        exemptionCode: code,
-        exemptionHeading: `${compactChapter99Code(code)} 产品排除已命中`,
-        exemptionStatus: "已排除",
-        exemptionSourceUrl: getChapter99SearchUrl(code),
-        summaryZh: `${code} 为 USTR 授予的 301 产品排除项；命中时仅适用原商品税率，不叠加对应 301 加征。`,
-        note: "请复核商品描述、原产国、申报日期和 U.S. note 20 对应排除范围。"
-      };
+      continue;
     }
 
     const excludedBy = findChapter99ExclusionReference(row, exclusionCodes);
     if (!excludedBy) {
-      return rule;
+      nextRules.push(rule);
+      continue;
     }
 
-    return {
+    const possibleExemptions = [
+      ...(rule.possibleExemptions || []),
+      buildUstr301ExclusionPrompt({
+        baseCode: code,
+        exclusionCode: excludedBy,
+        exclusionRow: rowsByCode.get(excludedBy),
+        subjectRow
+      })
+    ];
+    nextRules.push({
       ...rule,
-      autoApply: false,
-      exclusionApplies: true,
+      possibleExemptions,
       exemptionCode: excludedBy,
-      exemptionHeading: `${compactChapter99Code(excludedBy)} 排除 ${compactChapter99Code(code)} 加征`,
-      exemptionStatus: "已排除",
+      exemptionStatus: "条件豁免",
       exemptionSourceUrl: getChapter99SearchUrl(excludedBy),
-      summaryZh: `${code} 301 加征项被 ${excludedBy} 产品排除覆盖，当前不计入估算。`,
-      note: `${excludedBy} 为 USTR 授予的产品排除项；${code} 描述中列明 “Except as provided” 的排除关系。请按商品描述和申报日期复核。`
-    };
-  });
+      note: `${rule.note || "301 加征项"}；${excludedBy} 为可能适用的 USTR 产品排除项，需按商品描述、重量、原产国和申报日期复核。`
+    });
+  }
+  return nextRules;
 }
 
 function isUstr301ExclusionHeading(row, code) {
@@ -1645,6 +1641,54 @@ function findChapter99ExclusionReference(row, exclusionCodes) {
   return [...exclusionCodes].find((code) => description.includes(code)) || "";
 }
 
+function buildUstr301ExclusionPrompt({ baseCode, exclusionCode, exclusionRow, subjectRow }) {
+  const productDigits = normalizeHtsCode(subjectRow?.htsno || "");
+  const knownPrompt = getKnownUstr301ExclusionPrompt(productDigits, exclusionCode);
+  const titleZh = knownPrompt?.titleZh || "产品排除";
+  const summaryZh = knownPrompt?.summaryZh
+    || `${exclusionCode} 为 USTR 授予的 301 产品排除项；${baseCode} 描述中列明 “Except as provided” 的排除关系，命中时可申请不叠加对应 301 加征。`;
+  const conditionZh = knownPrompt?.conditionZh
+    || "需确认商品描述、HTS 统计号、原产国、申报日期和 U.S. note 20 对应排除范围";
+  const expiryLabel = knownPrompt?.expiryLabel || normalizeHtsDate(exclusionRow?.effectiveTo) || "未规定到期日";
+  return {
+    code: exclusionCode,
+    titleZh,
+    summaryZh,
+    conditionZh,
+    expiryLabel,
+    status: "possible",
+    autoExempt: false,
+    sourceUrl: getChapter99SearchUrl(exclusionCode)
+  };
+}
+
+function getKnownUstr301ExclusionPrompt(productDigits, exclusionCode) {
+  if (productDigits === "8516290090" && exclusionCode === "9903.88.69") {
+    return {
+      titleZh: "产品排除",
+      summaryZh: "电壁炉，重量不超过 55 公斤（归入统计申报号 8516.29.00.90）可能适用 USTR 301 产品排除。",
+      conditionZh: "需确认商品为电壁炉、单件重量不超过 55 公斤、HTS 归类及申报日期",
+      expiryLabel: "2026-11-09"
+    };
+  }
+  return null;
+}
+
+function normalizeHtsDate(value) {
+  if (!value) {
+    return "";
+  }
+  const match = String(value).match(/^(\d{4})(\d{2})(\d{2})$/);
+  if (match) {
+    return `${match[1]}-${match[2]}-${match[3]}`;
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return String(value);
+  }
+  return date.toISOString().slice(0, 10);
+}
+
 function getChapter99SearchUrl(code) {
   return `https://hts.usitc.gov/search?query=${encodeURIComponent(code)}`;
 }
@@ -1656,6 +1700,7 @@ function mergeAdditionalDutyBreakdown(items) {
     const existing = merged.get(key);
     if (existing) {
       existing.rate = roundRate(existing.rate + item.rate);
+      existing.hasPossibleExemption = existing.hasPossibleExemption || item.hasPossibleExemption;
     } else {
       merged.set(key, { ...item, rate: roundRate(item.rate) });
     }
@@ -2102,7 +2147,7 @@ async function loadAdditionalDuties(row) {
     }
 
     const rowsByCode = new Map((data.value || []).map((item) => [item.htsno, item]));
-    rules = applyChapter99ExclusionRules(rules, rowsByCode);
+    rules = applyChapter99ExclusionRules(rules, rowsByCode, row);
 
     let additionalRate = 0;
     const additionalDutyBreakdown = [];
@@ -2129,7 +2174,8 @@ async function loadAdditionalDuties(row) {
             ? `${rule.shortLabel || rule.group || "232"}-${rule.material.shortLabel}`
             : rule.shortLabel || rule.group || "CH99",
           code: item.htsno || rule.code || "",
-          rate: parsed.rate
+          rate: parsed.rate,
+          hasPossibleExemption: Boolean(rule.possibleExemptions?.length)
         });
         rateSummaries.push(`${rule.label} ${rule.code}: +${formatRateNumber(parsed.rate)}%`);
       }
@@ -2153,7 +2199,7 @@ async function loadAdditionalDuties(row) {
       : "--";
     els.surchargeBreakdown.textContent = state.additionalDutyBreakdown.length
       ? `构成：${state.additionalDutyBreakdown
-          .map((entry) => `${entry.displayLabel || entry.shortLabel} ${formatRateNumber(entry.rate)}%`)
+          .map((entry) => `${entry.displayLabel || entry.shortLabel} ${formatRateNumber(entry.rate)}%${entry.hasPossibleExemption ? "（有豁免）" : ""}`)
           .join(" + ")}；不含普通关税及 MPF/HMF`
       : "未自动计入附加税；不含普通关税及 MPF/HMF";
     els.additionalRate.value = String(roundRate(additionalRate));
@@ -2345,6 +2391,7 @@ function handleManualAssessmentInput(event) {
 function renderAdditionalDutyItem(item, parsed, rule, applied) {
   const displayCode = item.htsno || rule.code || "Chapter 99";
   const isSection232ZeroRate = rule.source === "section232" && parsed.auto && parsed.rate === 0;
+  const hasPossibleExemption = Boolean(rule.possibleExemptions?.length);
   const rateLabel = rule.exempt
     ? parsed.auto && parsed.rate > 0
       ? `${formatRateNumber(parsed.rate)}% 已豁免`
@@ -2354,7 +2401,7 @@ function renderAdditionalDutyItem(item, parsed, rule, applied) {
       ? `${formatRateNumber(parsed.rate)}% 不计入`
       : "已排除"
     : parsed.auto && parsed.rate > 0
-    ? `+${parsed.rate}%`
+    ? `+${formatRateNumber(parsed.rate)}%${hasPossibleExemption ? "（有豁免）" : ""}`
     : isSection232ZeroRate
     ? "0% 条件免加征"
     : "需人工确认";
@@ -2365,7 +2412,7 @@ function renderAdditionalDutyItem(item, parsed, rule, applied) {
     : isSection232ZeroRate && rule.choiceSelected
       ? "已选择0%条件分支"
       : applied
-        ? "已计入估算"
+        ? hasPossibleExemption ? "已计入估算，存在待核排除" : "已计入估算"
         : "未自动计入";
   const englishLine = rule.summaryZh ? "" : `<p class="en-line">${escapeHtml(item.description || "--")}</p>`;
   const exemptionBasis = rule.exempt && rule.exemptionCode
@@ -2392,6 +2439,7 @@ function renderRestrictionItem(item, parsed, rule, applied) {
   const code = isSection232Miss ? "未命中" : compactChapter99Code(displayCode);
   const isSection232ZeroRate = rule.source === "section232" && parsed.auto && parsed.rate === 0;
   const selectedZeroRateChoice = isSection232ZeroRate && Boolean(rule.choiceSelected);
+  const hasPossibleExemption = Boolean(rule.possibleExemptions?.length);
   const rateLabel = rule.exempt
     ? parsed.auto && parsed.rate > 0
       ? `${formatRateNumber(parsed.rate)}%`
@@ -2403,7 +2451,7 @@ function renderRestrictionItem(item, parsed, rule, applied) {
     : isSection232Miss
     ? "不适用"
     : parsed.auto && parsed.rate > 0
-    ? `${formatRateNumber(parsed.rate)}%`
+    ? `${formatRateNumber(parsed.rate)}%${hasPossibleExemption ? "（有豁免）" : ""}`
     : isSection232ZeroRate
     ? "0%"
     : "需判断";
@@ -2444,9 +2492,9 @@ function renderRestrictionItem(item, parsed, rule, applied) {
 
   return `
     <div class="restriction-item ${applied ? "applied" : "not-applied"}${isChoiceOption ? " choice-option" : ""}">
-      ${choiceControl}
+        ${choiceControl}
       <div class="restriction-main">
-        <strong>${escapeHtml(rule.label)}${rule.exempt || rule.exclusionApplies ? "（征税依据）" : ""}:</strong>
+        <strong>${escapeHtml(rule.label)}${rule.exempt || rule.exclusionApplies || hasPossibleExemption ? "（征税依据）" : ""}:</strong>
         ${materialBadge}
         <span>${escapeHtml(code)}</span>
         <b>${escapeHtml(rateLabel)}</b>
