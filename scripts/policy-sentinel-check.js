@@ -56,6 +56,7 @@ async function main() {
   checkChinaTariffs301(manifest, searchIndex, chinaTariffs301);
   checkLaptop122Outcome(searchIndex, section122);
   checkRelatedAnnexIiElectronics(section122);
+  checkPolyBag3923210095Outcome(searchIndex);
   checkTextile6307909891Outcome(searchIndex);
   checkHeater8516290090Outcome(searchIndex);
   checkCertificationPrompt(searchIndex, fdaFlags);
@@ -364,6 +365,16 @@ function checkTextile6307909891Outcome(searchIndex) {
   record(
     "6307.90.98.91 keeps current China 301 mapping without inherited 9903.91.01",
     Boolean(row && codes.has("9903.88.15") && codes.has("9903.88.69") && !codes.has("9903.91.01") && !codes.has("9903.91.07")),
+    `row=${row?.htsno || "missing"}; additionalDutyCodes=${[...codes].join(",") || "none"}`
+  );
+}
+
+function checkPolyBag3923210095Outcome(searchIndex) {
+  const row = findRowByDigits(searchIndex, "3923210095");
+  const codes = new Set(row?.additionalDutyCodes || []);
+  record(
+    "3923.21.00.95 keeps USTR 301 exclusion 9903.88.69 alongside base duty",
+    Boolean(row && codes.has("9903.88.69") && codes.has("9903.88.03")),
     `row=${row?.htsno || "missing"}; additionalDutyCodes=${[...codes].join(",") || "none"}`
   );
 }

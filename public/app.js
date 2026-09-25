@@ -1663,6 +1663,14 @@ function buildUstr301ExclusionPrompt({ baseCode, exclusionCode, exclusionRow, su
 }
 
 function getKnownUstr301ExclusionPrompt(productDigits, exclusionCode) {
+  if (productDigits === "3923210095" && exclusionCode === "9903.88.69") {
+    return {
+      titleZh: "产品排除",
+      summaryZh: "归入统计申报号 3923.21.00.95 的乙烯聚合物袋类产品列入 U.S. note 20(vvv)(iii) 排除清单，可能适用 USTR 301 产品排除。",
+      conditionZh: "需确认商品正确归入 3923.21.00.95、中国原产、申报日期在有效期内且符合排除清单范围",
+      expiryLabel: "2026-11-09"
+    };
+  }
   if (productDigits === "8516290090" && exclusionCode === "9903.88.69") {
     return {
       titleZh: "产品排除",

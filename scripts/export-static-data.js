@@ -471,6 +471,7 @@ function getChinaTariffs301CodesForRow(htsno, chinaTariffs301Map) {
 }
 
 const staticKnownAdditionalDutyCodeOverrides = new Map([
+  ["3923210095", new Set(["9903.88.03", "9903.88.69"])],
   ["8516290090", new Set(["9903.88.03", "9903.88.69"])],
   ["6307909825", new Set(["9903.88.15"])],
   ["6307909835", new Set(["9903.88.15"])],
