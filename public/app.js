@@ -32,6 +32,7 @@ import {
   VEHICLE_REMEDY_CHOICE_GROUP
 } from "./vehicle-duty-choice-engine.js?v=20260801-vehicle-choice-1";
 import { getChapterTitle } from "./chapter-titles.js?v=20260729-bilingual-chapters";
+import { applyChapter99ExclusionRules } from "./ustr-301-exclusion-engine.js?v=20260926-listed-exclusion-1";
 import { rankHtsSearchCandidates } from "./search-ranking.js?v=20260729-relevance-ranking-1";
 import {
   describeSection232Condition,
@@ -110,6 +111,7 @@ const state = {
   descriptionTranslations: new Map(),
   descriptionTranslationCoverage: null,
   vehicleDutySelections: new Map(),
+  ustrExclusionRows: new Map(),
   chapters: []
 };
 
@@ -537,6 +539,7 @@ async function init() {
     loadChapters(),
     loadSyncStatus(),
     loadPolicyRules(),
+    loadUstrExclusionRows(),
     loadForcedLaborExemptions(),
     loadEpaFlags(),
     loadFdaFlags(),
@@ -546,6 +549,23 @@ async function init() {
   setInterval(loadSyncStatus, 60 * 1000);
   showSearchPrompt();
   calculate();
+}
+
+function getUstrExclusionContext() {
+  return {
+    originCountry: state.policyRules?.defaultOriginCountry || fallbackPolicyRules.defaultOriginCountry,
+    referenceDate: new Date()
+  };
+}
+
+async function loadUstrExclusionRows(force = false) {
+  state.ustrExclusionRows = new Map();
+  try {
+    const data = await api(`/api/additional-duties?codes=9903.88.03,9903.88.69${force ? "&refresh=1" : ""}`);
+    state.ustrExclusionRows = new Map((data.value || []).map((row) => [row.htsno, row]));
+  } catch (error) {
+    console.warn(`USTR exclusion headings unavailable: ${error.message}`);
+  }
 }
 
 async function loadSection122Exclusions(force = false) {
@@ -1042,6 +1062,7 @@ async function refreshData() {
   try {
     await api("/api/refresh", { method: "POST" });
     await loadPolicyRules(true);
+    await loadUstrExclusionRows(true);
     await loadForcedLaborExemptions(true);
     await loadEpaFlags(true);
     await loadFdaFlags(true);
@@ -1126,17 +1147,22 @@ function renderSearchGuide(hints) {
 
 function renderAdditionalCodes(row) {
   const section232Matches = getSection232WoodProductMatches(row);
-  const rules = mergeAdditionalDutyRules([
+  const rules = applyChapter99ExclusionRules(mergeAdditionalDutyRules([
     ...buildAdditionalDutyRules(row, {
       section232Matches,
       appliedChapter99Rules: section232Matches.filter((match) => match.autoApply !== false && isSection232Code(match.code))
     }),
     ...section232Matches.map((match) => createSection232Rule(match))
-  ]);
+  ]), state.ustrExclusionRows, row, getUstrExclusionContext());
   if (rules.length) {
     return rules
       .slice(0, 3)
       .map((rule) => {
+        if (rule.exclusionApplies) {
+          const parsed = parseAdditionalPercent(state.ustrExclusionRows.get(rule.code)?.general || "");
+          const rate = parsed.auto ? ` ${formatRateNumber(parsed.rate)}%` : "";
+          return `<span class="code-tag">${escapeHtml(rule.shortLabel)} ${escapeHtml(rule.code)}${rate} 已排除 · 不计入</span>`;
+        }
         if (rule.exempt) {
           const rate = rule.rate == null ? "" : ` ${formatRateNumber(rule.rate)}%`;
           return `<span class="code-tag">${escapeHtml(rule.shortLabel)} ${escapeHtml(rule.code || "")}${escapeHtml(rate)} 已豁免</span>`;
@@ -1581,126 +1607,6 @@ function mergeAdditionalDutyRules(rules) {
   return [...merged.values()];
 }
 
-function applyChapter99ExclusionRules(rules, rowsByCode, subjectRow = null) {
-  const exclusionCodes = new Set(
-    rules
-      .map((rule) => rule.code)
-      .filter((code) => isUstr301ExclusionHeading(rowsByCode.get(code), code))
-  );
-  if (!exclusionCodes.size) {
-    return rules;
-  }
-
-  const nextRules = [];
-  for (const rule of rules) {
-    const code = rule.code || "";
-    const row = rowsByCode.get(code);
-    if (exclusionCodes.has(code)) {
-      continue;
-    }
-
-    const excludedBy = findChapter99ExclusionReference(row, exclusionCodes);
-    if (!excludedBy) {
-      nextRules.push(rule);
-      continue;
-    }
-
-    const possibleExemptions = [
-      ...(rule.possibleExemptions || []),
-      buildUstr301ExclusionPrompt({
-        baseCode: code,
-        exclusionCode: excludedBy,
-        exclusionRow: rowsByCode.get(excludedBy),
-        subjectRow
-      })
-    ];
-    nextRules.push({
-      ...rule,
-      possibleExemptions,
-      exemptionCode: excludedBy,
-      exemptionStatus: "条件豁免",
-      exemptionSourceUrl: getChapter99SearchUrl(excludedBy),
-      note: `${rule.note || "301 加征项"}；${excludedBy} 为可能适用的 USTR 产品排除项，需按商品描述、重量、原产国和申报日期复核。`
-    });
-  }
-  return nextRules;
-}
-
-function isUstr301ExclusionHeading(row, code) {
-  if (!/^9903\.88\.\d{2}$/.test(String(code || ""))) {
-    return false;
-  }
-  const description = `${row?.description || ""} ${row?.descriptionZh || ""}`;
-  const general = String(row?.general || "");
-  return /covered by an exclusion|exclusion granted by the U\.S\. Trade Representative|产品排除/i.test(description)
-    && !/\+\s*\d+(?:\.\d+)?\s*%/.test(general);
-}
-
-function findChapter99ExclusionReference(row, exclusionCodes) {
-  const description = `${row?.description || ""} ${row?.descriptionZh || ""}`;
-  return [...exclusionCodes].find((code) => description.includes(code)) || "";
-}
-
-function buildUstr301ExclusionPrompt({ baseCode, exclusionCode, exclusionRow, subjectRow }) {
-  const productDigits = normalizeHtsCode(subjectRow?.htsno || "");
-  const knownPrompt = getKnownUstr301ExclusionPrompt(productDigits, exclusionCode);
-  const titleZh = knownPrompt?.titleZh || "产品排除";
-  const summaryZh = knownPrompt?.summaryZh
-    || `${exclusionCode} 为 USTR 授予的 301 产品排除项；${baseCode} 描述中列明 “Except as provided” 的排除关系，命中时可申请不叠加对应 301 加征。`;
-  const conditionZh = knownPrompt?.conditionZh
-    || "需确认商品描述、HTS 统计号、原产国、申报日期和 U.S. note 20 对应排除范围";
-  const expiryLabel = knownPrompt?.expiryLabel || normalizeHtsDate(exclusionRow?.effectiveTo) || "未规定到期日";
-  return {
-    code: exclusionCode,
-    titleZh,
-    summaryZh,
-    conditionZh,
-    expiryLabel,
-    status: "possible",
-    autoExempt: false,
-    sourceUrl: getChapter99SearchUrl(exclusionCode)
-  };
-}
-
-function getKnownUstr301ExclusionPrompt(productDigits, exclusionCode) {
-  if (productDigits === "3923210095" && exclusionCode === "9903.88.69") {
-    return {
-      titleZh: "产品排除",
-      summaryZh: "归入统计申报号 3923.21.00.95 的乙烯聚合物袋类产品列入 U.S. note 20(vvv)(iii) 排除清单，可能适用 USTR 301 产品排除。",
-      conditionZh: "需确认商品正确归入 3923.21.00.95、中国原产、申报日期在有效期内且符合排除清单范围",
-      expiryLabel: "2026-11-09"
-    };
-  }
-  if (productDigits === "8516290090" && exclusionCode === "9903.88.69") {
-    return {
-      titleZh: "产品排除",
-      summaryZh: "电壁炉，重量不超过 55 公斤（归入统计申报号 8516.29.00.90）可能适用 USTR 301 产品排除。",
-      conditionZh: "需确认商品为电壁炉、单件重量不超过 55 公斤、HTS 归类及申报日期",
-      expiryLabel: "2026-11-09"
-    };
-  }
-  return null;
-}
-
-function normalizeHtsDate(value) {
-  if (!value) {
-    return "";
-  }
-  const match = String(value).match(/^(\d{4})(\d{2})(\d{2})$/);
-  if (match) {
-    return `${match[1]}-${match[2]}-${match[3]}`;
-  }
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return String(value);
-  }
-  return date.toISOString().slice(0, 10);
-}
-
-function getChapter99SearchUrl(code) {
-  return `https://hts.usitc.gov/search?query=${encodeURIComponent(code)}`;
-}
-
 function mergeAdditionalDutyBreakdown(items) {
   const merged = new Map();
   for (const item of items) {
@@ -2044,6 +1950,7 @@ function renderCertificationItem(match, index) {
 
 async function loadAdditionalDuties(row) {
   const requestId = ++state.additionalDutyRequestId;
+  const exclusionContext = getUstrExclusionContext();
   let rules = buildAdditionalDutyRules(row);
   state.additionalDutyBreakdown = [];
   els.additionalRate.value = "0";
@@ -2155,7 +2062,7 @@ async function loadAdditionalDuties(row) {
     }
 
     const rowsByCode = new Map((data.value || []).map((item) => [item.htsno, item]));
-    rules = applyChapter99ExclusionRules(rules, rowsByCode, row);
+    rules = applyChapter99ExclusionRules(rules, rowsByCode, row, exclusionContext);
 
     let additionalRate = 0;
     const additionalDutyBreakdown = [];
@@ -2171,7 +2078,7 @@ async function loadAdditionalDuties(row) {
         general: rule.rate == null ? "" : `The duty provided in the applicable subheading + ${rule.rate}%`
       };
       const parsed = rule.rate == null ? parseAdditionalPercent(item.general) : { auto: true, rate: rule.rate };
-      const shouldAutoApply = rule.autoApply && parsed.auto && parsed.rate > 0;
+      const shouldAutoApply = rule.autoApply && !rule.exempt && !rule.exclusionApplies && parsed.auto && parsed.rate > 0;
       if (shouldAutoApply) {
         additionalRate += parsed.rate;
         additionalDutyBreakdown.push({
@@ -2202,7 +2109,11 @@ async function loadAdditionalDuties(row) {
     els.restrictionList.innerHTML = renderedRestrictionItems.join("");
 
     state.additionalDutyBreakdown = mergeAdditionalDutyBreakdown(additionalDutyBreakdown);
-    els.surchargeRate.textContent = state.additionalDutyBreakdown.length
+    const excludedRules = rules.filter((rule) => rule.exclusionApplies);
+    const excludedSummary = excludedRules
+      .map((rule) => `${rule.code} 已由 ${rule.exemptionCode} 排除，不计入`)
+      .join("；");
+    els.surchargeRate.textContent = state.additionalDutyBreakdown.length || excludedRules.length
       ? `${formatRateNumber(additionalRate)}%`
       : "--";
     els.surchargeBreakdown.textContent = state.additionalDutyBreakdown.length
@@ -2210,10 +2121,15 @@ async function loadAdditionalDuties(row) {
           .map((entry) => `${entry.displayLabel || entry.shortLabel} ${formatRateNumber(entry.rate)}%${entry.hasPossibleExemption ? "（有豁免）" : ""}`)
           .join(" + ")}；不含普通关税及 MPF/HMF`
       : "未自动计入附加税；不含普通关税及 MPF/HMF";
+    if (excludedSummary) {
+      els.surchargeBreakdown.textContent += `；${excludedSummary}`;
+    }
     els.additionalRate.value = String(roundRate(additionalRate));
     els.calcMessage.textContent = rateSummaries.length
       ? `${state.baseRateMessage} 已带入附加税项 ${rateSummaries.join("，")}；请确认原产国、豁免和适用条件。`
-      : `${state.baseRateMessage} 已列出附加税项，但未自动识别出可计算的百分比。`;
+      : excludedRules.length
+        ? `${state.baseRateMessage} ${excludedSummary}。`
+        : `${state.baseRateMessage} 已列出附加税项，但未自动识别出可计算的百分比。`;
     calculate();
   } catch (error) {
     if (requestId !== state.additionalDutyRequestId) {
@@ -2423,11 +2339,11 @@ function renderAdditionalDutyItem(item, parsed, rule, applied) {
         ? hasPossibleExemption ? "已计入估算，存在待核排除" : "已计入估算"
         : "未自动计入";
   const englishLine = rule.summaryZh ? "" : `<p class="en-line">${escapeHtml(item.description || "--")}</p>`;
-  const exemptionBasis = rule.exempt && rule.exemptionCode
+  const exemptionBasis = (rule.exempt || rule.exclusionApplies) && rule.exemptionCode
     ? `<small class="additional-duty-exemption-basis"><strong>排除依据：</strong>${escapeHtml(rule.exemptionCode)}${rule.exemptionMatchedHts ? ` · 命中 HTS ${escapeHtml(rule.exemptionMatchedHts)}` : ""}</small>`
     : "";
   return `
-    <div class="additional-duty-item ${applied ? "applied" : "not-applied"}">
+    <div class="additional-duty-item ${applied ? "applied" : "not-applied"}${rule.exclusionApplies ? " excluded" : ""}">
       <div>
         <strong>${escapeHtml(rule.label)} <span>${escapeHtml(displayCode)}</span></strong>
         <p class="zh-line">${escapeHtml(rule.summaryZh || item.descriptionZh || item.description || "暂无中文释义")}</p>
@@ -2499,7 +2415,7 @@ function renderRestrictionItem(item, parsed, rule, applied) {
     : "";
 
   return `
-    <div class="restriction-item ${applied ? "applied" : "not-applied"}${isChoiceOption ? " choice-option" : ""}">
+    <div class="restriction-item ${applied ? "applied" : "not-applied"}${rule.exclusionApplies ? " excluded" : ""}${isChoiceOption ? " choice-option" : ""}">
         ${choiceControl}
       <div class="restriction-main">
         <strong>${escapeHtml(rule.label)}${rule.exempt || rule.exclusionApplies || hasPossibleExemption ? "（征税依据）" : ""}:</strong>
@@ -2621,9 +2537,12 @@ function renderExemptionDetails(rule) {
       </li>
     `)
     .join("");
-  const sourceLink = rule.exemptionSourceUrl
-    ? `<a href="${escapeHtml(rule.exemptionSourceUrl)}" target="_blank" rel="noopener noreferrer">打开官方说明</a>`
-    : "";
+  const sources = rule.exemptionSources?.length
+    ? rule.exemptionSources
+    : rule.exemptionSourceUrl ? [{ label: "打开官方说明", url: rule.exemptionSourceUrl }] : [];
+  const sourceLink = sources.map((source) =>
+    `<a href="${escapeHtml(source.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(source.label)}</a>`
+  ).join(" · ");
 
   return `
     <details class="forced-labor-exemption-detail">
@@ -3300,7 +3219,7 @@ async function staticApi(path, options = {}) {
       .split(",")
       .map((code) => code.trim())
       .filter(Boolean))];
-    const chapter99 = await loadStaticData("chapter99.json");
+    const chapter99 = await loadStaticData("chapter99.json", forceRefresh);
     const rows = (chapter99.value || []).filter((row) => codes.includes(row.htsno));
     const rowCodes = new Set(rows.map((row) => row.htsno));
     const policyRules = await loadStaticData("policy-rules.json").catch(() => state.policyRules || fallbackPolicyRules);

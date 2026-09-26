@@ -1585,6 +1585,21 @@ tbody tr.selected td:first-child {
   background: #f4e4c6;
 }
 
+.additional-duty-item.excluded {
+  border-color: #a8cfc0;
+  background: #f3faf6;
+}
+
+.additional-duty-item.excluded .rate-pill {
+  color: #245e50;
+  background: #dcefe5;
+}
+
+.restriction-item.excluded .restriction-main b,
+.restriction-item.excluded .restriction-status {
+  color: #245e50;
+}
+
 .empty-mini {
   color: #68400b;
   font-size: 13px;

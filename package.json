@@ -24,7 +24,8 @@
     "check:certifications": "node scripts/check-certification-rules.js",
     "check:hts-statistical-notes": "node scripts/check-chapter91-statistical-notes.js",
     "check:policy-sentinel": "node scripts/policy-sentinel-check.js",
-    "check": "npm run check:translation-pipeline && npm run check:descriptions && npm run check:search-catalog && npm run check:search-ranking && npm run check:certifications && npm run check:hts-statistical-notes && npm run check:policy-sentinel"
+    "check:ustr-exclusions": "node scripts/check-ustr-301-exclusions.js && node scripts/check-ustr-301-ui.js",
+    "check": "npm run check:translation-pipeline && npm run check:descriptions && npm run check:search-catalog && npm run check:search-ranking && npm run check:certifications && npm run check:hts-statistical-notes && npm run check:policy-sentinel && npm run check:ustr-exclusions"
   },
   "engines": {
     "node": ">=20"
