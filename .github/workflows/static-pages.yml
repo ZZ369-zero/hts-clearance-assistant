@@ -264,7 +264,7 @@ jobs:
               -f review_model="${COPILOT_REVIEW_MODEL:-copilot-default}" \
               -f auto_continue=true \
               -f provider_retry_count=0
-          elif [ "${AUTO_CONTINUE_TRANSLATIONS:-true}" = "true" ] && [ "$final_pending" != "0" ] && [ "$run_deferred_total" != "0" ]; then
+          elif { [ "${AUTO_CONTINUE_TRANSLATIONS:-true}" = "true" ] || [ "${{ github.event_name }}" = "schedule" ]; } && [ "$final_pending" != "0" ] && [ "$run_deferred_total" != "0" ]; then
             retry_count="${PROVIDER_RETRY_COUNT:-0}"
             retry_limit="${PROVIDER_RETRY_LIMIT:-12}"
             retry_delay="${PROVIDER_RETRY_DELAY_SECONDS:-600}"

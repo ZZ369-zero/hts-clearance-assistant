@@ -1038,6 +1038,15 @@ tbody tr.selected td:first-child {
   font-size: 14px;
 }
 
+.description-en {
+  display: block;
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.45;
+}
+
 .official-description-details {
   border-top: 1px solid #dce5ec;
   padding: 9px 14px 11px;

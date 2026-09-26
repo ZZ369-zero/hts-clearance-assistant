@@ -1833,10 +1833,10 @@ function renderDetail(row) {
   }
 
   els.selectedCode.textContent = row.htsno;
-  els.selectedDescription.innerHTML = `<span class="zh-line">${escapeHtml(displayZhDescription(row))}</span>`;
+  els.selectedDescription.innerHTML = renderDescriptionLines(row);
   renderClassificationPath(row);
   els.miniHsCode.textContent = normalizeHtsCode(row.htsno);
-  els.miniProductDescription.textContent = displayZhDescription(row);
+  els.miniProductDescription.innerHTML = renderDescriptionLines(row);
   els.effectiveRate.textContent = formatMiniRateDisplay(row.general) || "--";
   els.miniGeneralRate.textContent = formatMiniRateDisplay(row.general) || "--";
   renderMiniGeneralRateNote(row);
@@ -1888,11 +1888,13 @@ function renderClassificationPath(row) {
   }
   els.classificationPathList.innerHTML = hierarchy
     .map((item, index) => {
-      const zh = getPreferredDescriptionZh(item) || "暂无校核中文译文（请参阅英文官方原文）";
+      const zh = getPreferredDescriptionZh(item);
+      const english = String(item.descriptionEn || item.description || "").trim();
       return `
         <li class="${index === hierarchy.length - 1 ? "is-leaf" : ""}">
           <span class="description-level-code">${escapeHtml(item.htsno || `第 ${index + 1} 级`)}</span>
-          <strong>${escapeHtml(zh)}</strong>
+          <strong>${escapeHtml(zh || "暂无校核中文译文（请参阅英文官方原文）")}</strong>
+          ${english ? `<small class="description-en">官方英文：${escapeHtml(english)}</small>` : ""}
         </li>
       `;
     })
@@ -3897,6 +3899,12 @@ function rowKey(row) {
 
 function displayZhDescription(row) {
   return getPreferredDescriptionZh(row) || "暂无校核中文译文";
+}
+
+function renderDescriptionLines(row) {
+  const zh = getPreferredDescriptionZh(row);
+  const english = String(row.descriptionEn || row.description || "").trim();
+  return `<span class="zh-line">${escapeHtml(zh || "暂无校核中文译文（请参阅英文官方原文）")}</span>${english ? `<span class="description-en">官方英文：${escapeHtml(english)}</span>` : ""}`;
 }
 
 function hydrateDescriptionTranslations(rows = []) {
