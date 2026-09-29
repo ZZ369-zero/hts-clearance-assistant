@@ -57,6 +57,7 @@ async function main() {
   checkLaptop122Outcome(searchIndex, section122);
   checkRelatedAnnexIiElectronics(section122);
   checkPolyBag3923210095Outcome(searchIndex);
+  checkSprayerPart8424909080Outcome(searchIndex, chapter99, section232);
   checkTextile6307909891Outcome(searchIndex);
   checkHeater8516290090Outcome(searchIndex);
   checkCertificationPrompt(searchIndex, fdaFlags);
@@ -376,6 +377,34 @@ function checkPolyBag3923210095Outcome(searchIndex) {
     "3923.21.00.95 keeps USTR 301 exclusion 9903.88.69 alongside base duty",
     Boolean(row && codes.has("9903.88.69") && codes.has("9903.88.03")),
     `row=${row?.htsno || "missing"}; additionalDutyCodes=${[...codes].join(",") || "none"}`
+  );
+}
+
+function checkSprayerPart8424909080Outcome(searchIndex, chapter99, section232) {
+  const row = findRowByDigits(searchIndex, "8424909080");
+  const codes = new Set(row?.additionalDutyCodes || []);
+  const aluminum232 = selectSection232MetalCandidates("8424909080", section232.entries || [], row?.general || "")
+    .find((candidate) => candidate.autoApply && candidate.entry.chapter99 === "9903.82.09");
+  const aluminumHeading = (chapter99.value || []).find((item) => item.htsno === "9903.82.09");
+  const neighbor = findRowByDigits(searchIndex, "8424909020");
+  const neighborCodes = new Set(neighbor?.additionalDutyCodes || []);
+
+  record(
+    "8424.90.90.80 keeps exact USTR 301 exclusion and independent aluminum 232 duty",
+    Boolean(
+      row
+      && /^Free$/i.test(String(row.general || "").trim())
+      && codes.has("9903.88.03")
+      && codes.has("9903.88.69")
+      && aluminum232
+      && /\+\s*25%/.test(String(aluminumHeading?.general || ""))
+    ),
+    `row=${row?.htsno || "missing"}; general=${row?.general || "missing"}; additionalDutyCodes=${[...codes].join(",") || "none"}; aluminum232=${aluminum232?.entry.chapter99 || "none"}; rate=${aluminumHeading?.general || "missing"}`
+  );
+  record(
+    "8424.90.90.80 exclusion override does not spill into neighboring 8424.90.90.20",
+    Boolean(neighbor && neighborCodes.has("9903.88.03") && !neighborCodes.has("9903.88.69")),
+    `neighbor=${neighbor?.htsno || "missing"}; additionalDutyCodes=${[...neighborCodes].join(",") || "none"}`
   );
 }
 

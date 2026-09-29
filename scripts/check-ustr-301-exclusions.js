@@ -6,6 +6,7 @@ const chapter99 = JSON.parse(await readFile(new URL("../public/data/chapter99.js
 const rowsByCode = new Map(chapter99.value.filter((row) => ["9903.88.03", "9903.88.69"].includes(row.htsno)).map((row) => [row.htsno, row]));
 assert.equal(rowsByCode.size, 2, "Deployed data must contain the base and exclusion headings");
 const subject = Object.freeze({ htsno: "3923.21.00.95", general: "3%" });
+const sprayerPart = Object.freeze({ htsno: "8424.90.90.80", general: "Free" });
 const rules = [
   { code: "9903.88.03", group: "301", autoApply: true, rate: 25, note: "基础 301 加征" },
   { code: "9903.88.69", group: "301", autoApply: false, rate: null },
@@ -15,8 +16,15 @@ const originalRules = structuredClone(rules);
 const originalRows = structuredClone([...rowsByCode]);
 rules.forEach(Object.freeze);
 Object.freeze(rules);
+const sprayerRules = Object.freeze([
+  rules[0],
+  rules[1],
+  Object.freeze({ code: "9903.82.09", group: "232", autoApply: true, rate: 25, note: "232 铝制衍生品" })
+]);
+const originalSprayerRules = structuredClone(sprayerRules);
 const context = { originCountry: "China", entryDate: "2026-09-26" };
 const apply = (overrides = {}, row = subject, data = rowsByCode, inputRules = rules) => applyChapter99ExclusionRules(inputRules, data, row, { ...context, ...overrides });
+const applySprayer = (overrides = {}, row = sprayerPart, data = rowsByCode, inputRules = sprayerRules) => applyChapter99ExclusionRules(inputRules, data, row, { ...context, ...overrides });
 const baseRule = (result) => result.find((rule) => rule.code === "9903.88.03");
 const total = (result) => result.filter((rule) => rule.autoApply && !rule.exempt && !rule.exclusionApplies).reduce((sum, rule) => sum + (rule.rate || 0), 0);
 const assertExcluded = (result, label) => {
@@ -32,6 +40,26 @@ const assertNotExcluded = (result, label) => {
   assert.equal(baseRule(result).autoApply, true, label);
   assert.equal(total(result), 37.5, label);
 };
+const assertSprayerExcluded = (result, label) => {
+  const base = baseRule(result);
+  const aluminum232 = result.find((rule) => rule.code === "9903.82.09");
+  assert.equal(base.exclusionApplies, true, label);
+  assert.equal(base.autoApply, false, label);
+  assert.equal(base.exemptionStatus, "已排除", label);
+  assert.equal(base.rate, 25, "The excluded 301 rate remains visible for audit");
+  assert.equal(base.exemptionMatchedHts, sprayerPart.htsno, label);
+  assert.match(base.summaryZh, /20\(vvv\)\(iii\)\(12\)/, label);
+  assert.equal(base.possibleExemptions.length, 0, "The exact listed exclusion is not left as a possible exemption");
+  assert.equal(aluminum232.autoApply, true, "The independent aluminum Section 232 duty stays applied");
+  assert.notEqual(aluminum232.exclusionApplies, true, "The USTR 301 exclusion must not spill into Section 232");
+  assert.equal(aluminum232.rate, 25, "9903.82.09 remains 25%");
+  assert.equal(total(result), 25, "Only the aluminum Section 232 duty remains in the additional-duty total");
+};
+const assertSprayerNotExcluded = (result, label) => {
+  assert.notEqual(baseRule(result).exclusionApplies, true, label);
+  assert.equal(baseRule(result).autoApply, true, label);
+  assert.equal(total(result), 50, label);
+};
 
 const result = apply();
 assertExcluded(result, "The explicitly listed statistical code qualifies");
@@ -41,6 +69,24 @@ assert.equal(baseRule(result).possibleExemptions.length, 0, "Matched exclusions 
 assert.equal(baseRule(result).exemptionSources.length, 2, "Both scope and extension have official evidence");
 assert.equal(subject.general, "3%", "Ordinary duty remains unchanged");
 assert.equal(3 + total(result), 15.5, "The total retains 3% ordinary duty and unrelated 12.5%");
+
+const sprayerResult = applySprayer();
+assertSprayerExcluded(sprayerResult, "8424.90.9080 is an exact listed USTR exclusion");
+assert.equal(sprayerPart.general, "Free", "The USTR exclusion does not change the ordinary Free rate");
+assert.equal(total(sprayerResult), 25, "The effective surcharge is 25%, not 50%");
+for (const date of ["2024-06-15", "2026-11-09", "2026-11-10T04:59:59Z"]) {
+  assertSprayerExcluded(applySprayer({ entryDate: date }), `8424.90.9080 valid entry date: ${date}`);
+}
+for (const date of ["2024-06-14", "2026-11-10", "2026-11-10T05:00:00Z"]) {
+  assertSprayerNotExcluded(applySprayer({ entryDate: date }), `8424.90.9080 outside the legal date interval: ${date}`);
+}
+for (const origin of ["US", "Vietnam", "Hong Kong", "China or Vietnam", ""]) {
+  assertSprayerNotExcluded(applySprayer({ originCountry: origin }), `8424.90.9080 non-China or ambiguous origin: ${origin}`);
+}
+assertSprayerExcluded(applySprayer({}, { htsno: "8424909080", general: "Free" }), "Unpunctuated 8424.90.9080 matches exactly");
+for (const code of ["8424.90.90", "8424.90.90.10", "8424.90.90.20", "8424.90.90.81", "8424.90.90.80other"]) {
+  assertSprayerNotExcluded(applySprayer({}, { htsno: code, general: "Free" }), `Never extend the 8424.90.9080 exclusion to a parent, neighbor, or malformed code: ${code}`);
+}
 
 for (const date of ["2024-06-15", "2026-11-08", "2026-11-09", "2026-11-10T04:59:59Z", "2026-11-10T12:59:59+08:00"]) {
   assertExcluded(apply({ entryDate: date }), `Valid entry date: ${date}`);
@@ -98,6 +144,7 @@ for (const [code, patch] of [
 const extraBase = apply({}, subject, rowsByCode, [...rules, { code: "9903.88.04", rate: 25, autoApply: true }]);
 assert.notEqual(extraBase.find((rule) => rule.code === "9903.88.04").exclusionApplies, true, "Only the implemented base heading may auto-exempt");
 assert.deepEqual(rules, originalRules, "Input rules are not mutated");
+assert.deepEqual(sprayerRules, originalSprayerRules, "Sprayer input rules are not mutated");
 assert.deepEqual([...rowsByCode], originalRows, "Official rows are not mutated");
 
 console.log("USTR 301 exclusion sentinels passed: official listed HTS, origin, inclusive U.S. entry dates, missing-evidence safeguards, unchanged ordinary/other duties, and conditional product exclusions.");

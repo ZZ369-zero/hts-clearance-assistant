@@ -32,7 +32,7 @@ import {
   VEHICLE_REMEDY_CHOICE_GROUP
 } from "./vehicle-duty-choice-engine.js?v=20260801-vehicle-choice-1";
 import { getChapterTitle } from "./chapter-titles.js?v=20260729-bilingual-chapters";
-import { applyChapter99ExclusionRules } from "./ustr-301-exclusion-engine.js?v=20260926-listed-exclusion-1";
+import { applyChapter99ExclusionRules } from "./ustr-301-exclusion-engine.js?v=20260929-listed-exclusion-2";
 import { rankHtsSearchCandidates } from "./search-ranking.js?v=20260729-relevance-ranking-1";
 import {
   describeSection232Condition,

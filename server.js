@@ -3371,6 +3371,7 @@ function mergeInheritedFields(row, parent) {
 // suffixes explicitly; avoid broad parent inheritance or missing exclusions.
 const knownAdditionalDutyCodeOverrides = new Map([
   ["3923210095", new Set(["9903.88.03", "9903.88.69"])],
+  ["8424909080", new Set(["9903.88.03", "9903.88.69"])],
   ["8516290090", new Set(["9903.88.03", "9903.88.69"])],
   ["6307909825", new Set(["9903.88.15"])],
   ["6307909835", new Set(["9903.88.15"])],

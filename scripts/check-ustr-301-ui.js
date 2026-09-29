@@ -108,9 +108,50 @@ function assertExcluded(page, row) {
   assert.doesNotMatch(page.els.taxBreakdown.innerHTML, /37\.5%/);
 }
 
+function assertSprayerExcluded(page, row) {
+  assert.equal(page.els.surchargeRate.textContent, "25%", "301 exclusion leaves only aluminum 232 in the surcharge card");
+  assert.equal(page.els.additionalRate.value, "25", "calculator input must use the effective 25%, not the pre-exclusion 50%");
+  assert.equal(page.els.generalRate.value, "0", "ordinary Free rate stays zero");
+  assert.equal(page.els.miniGeneralRate.textContent, "Free", "ordinary rate card stays Free");
+  assert.equal(page.els.baseDuty.textContent, "$0.00");
+  assert.equal(page.els.extraDuty.textContent, "$2,500.00");
+  assert.equal(page.els.totalDuty.textContent, "$2,500.00");
+  assert.ok(!page.state.additionalDutyBreakdown.some((item) => item.code === "9903.88.03"), "excluded 301 must not enter the calculator breakdown");
+  assert.ok(page.state.additionalDutyBreakdown.some((item) => item.code === "9903.82.09" && item.rate === 25), "aluminum 232 remains in the calculator breakdown");
+  assert.ok(!page.state.additionalDutyBreakdown.some((item) => item.code === "9903.05.31"), "the independent 232 overlap continues to use the forced-labor exclusion path");
+  assert.match(page.els.surchargeBreakdown.textContent, /232-Aluminum 25%/);
+  assert.match(page.els.surchargeBreakdown.textContent, /9903\.88\.03.*9903\.88\.69.*不计入/);
+  assert.match(page.els.additionalDutyList.innerHTML, /not-applied excluded/);
+  assert.match(page.els.additionalDutyList.innerHTML, /9903\.82\.09/);
+  assert.match(page.els.additionalDutyList.innerHTML, /2026-11-09/);
+  assert.match(page.renderAdditionalCodes(row), /301 9903\.88\.03 25% 已排除 · 不计入/);
+  assert.match(page.els.additionalDutySplit.innerHTML, /9903(?:\.82\.09|8209)/);
+  assert.doesNotMatch(page.els.additionalDutySplit.innerHTML, /9903\.88\.03|99038803/);
+  assert.match(page.els.taxBreakdown.innerHTML, /9903(?:\.82\.09|8209)/);
+  assert.doesNotMatch(page.els.taxBreakdown.innerHTML, /50%/);
+}
+
+function assertSprayerNotExcluded(page, row, label) {
+  assert.ok(page.state.additionalDutyBreakdown.some((item) => item.code === "9903.88.03" && item.rate === 25), label);
+  assert.ok(page.state.additionalDutyBreakdown.some((item) => item.code === "9903.82.09" && item.rate === 25), `${label}: aluminum 232 remains applied`);
+  assert.equal(page.els.surchargeRate.textContent, "50%", `${label}: both 301 and aluminum 232 remain in the subtotal`);
+  assert.equal(page.els.additionalRate.value, "50", `${label}: calculator agrees with the non-excluded subtotal`);
+  assert.doesNotMatch(page.renderAdditionalCodes(row), /9903\.88\.03 25% 已排除/, label);
+  assert.doesNotMatch(page.els.surchargeBreakdown.textContent, /9903\.88\.03 已由 9903\.88\.69 排除/, label);
+}
+
 const current = await openPage();
 const listedRow = await selectHts(current.page, "3923210095");
 assertExcluded(current.page, listedRow);
+
+const sprayerRow = await selectHts(current.page, "8424909080");
+assertSprayerExcluded(current.page, sprayerRow);
+
+const neighboringSprayerPart = await selectHts(current.page, "8424909020");
+assert.ok(current.page.state.additionalDutyBreakdown.some((item) => item.code === "9903.88.03" && item.rate === 25));
+assert.doesNotMatch(current.page.renderAdditionalCodes(neighboringSprayerPart), /已排除/);
+assert.doesNotMatch(current.page.els.surchargeBreakdown.textContent, /已由.*排除/);
+assertSprayerExcluded(current.page, await selectHts(current.page, "8424909080"));
 
 // Re-selecting a conditional product must clear the prior automatic exclusion;
 // switching back must also restore the correct calculator amount.
@@ -122,6 +163,7 @@ assertExcluded(current.page, await selectHts(current.page, "3923210095"));
 
 const finalDay = await openPage({ date: "2026-11-10T04:59:59.999Z" });
 assertExcluded(finalDay.page, await selectHts(finalDay.page, "3923210095"));
+assertSprayerExcluded(finalDay.page, await selectHts(finalDay.page, "8424909080"));
 for (const options of [
   { date: "2026-11-10T05:00:00.000Z" },
   { origin: "Canada" },
@@ -134,6 +176,16 @@ for (const options of [
   assert.doesNotMatch(page.els.surchargeBreakdown.textContent, /已由.*排除/);
 }
 
+for (const options of [
+  { date: "2026-11-10T05:00:00.000Z" },
+  { origin: "Canada" },
+  { missingHeading: true }
+]) {
+  const { page } = await openPage(options);
+  const row = await selectHts(page, "8424909080");
+  assertSprayerNotExcluded(page, row, `8424.90.9080 must not auto-exclude outside verified conditions: ${JSON.stringify(options)}`);
+}
+
 // A failed/missing heading must be recoverable through the real force-refresh
 // cache path, including the search-list cache introduced for exclusion badges.
 const refresh = await openPage({ missingHeading: true });
@@ -142,5 +194,6 @@ refresh.fixture.missingHeading = false;
 await refresh.page.loadUstrExclusionRows(true);
 assert.ok(refresh.fetches.some((request) => request.file === "chapter99.json" && request.cache === "reload"));
 assertExcluded(refresh.page, await selectHts(refresh.page, "3923210095"));
+assertSprayerExcluded(refresh.page, await selectHts(refresh.page, "8424909080"));
 
 console.log("USTR 301 UI checks passed: real static API, search badges, duty cards, calculator, expiry, origin, conditional products, and refresh.");

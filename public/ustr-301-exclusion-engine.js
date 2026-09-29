@@ -1,12 +1,22 @@
-const LISTED_HTS = "3923210095";
-const LISTED_HTS_DISPLAY = "3923.21.00.95";
 const BASE_CODE = "9903.88.03";
 const EXCLUSION_CODE = "9903.88.69";
 const VALID_FROM = "2024-06-15";
 const VALID_TO = "2026-11-09";
+const VERIFIED_EXACT_EXCLUSIONS = new Map([
+  ["3923210095", {
+    displayHts: "3923.21.00.95",
+    officialStatisticalNumber: "3923.21.0095",
+    noteReference: "U.S. note 20(vvv)(iii)(8)"
+  }],
+  ["8424909080", {
+    displayHts: "8424.90.90.80",
+    officialStatisticalNumber: "8424.90.9080",
+    noteReference: "U.S. note 20(vvv)(iii)(12)"
+  }]
+]);
 const OFFICIAL_SOURCES = [
   {
-    label: "USTR 2024 排除清单：U.S. note 20(vvv)(iii)(8)",
+    label: "USTR 2024 排除清单：U.S. note 20(vvv)(iii)",
     url: "https://ustr.gov/sites/default/files/89%20FRN%2046948%20%28May%2030%2C%202024%29.pdf"
   },
   {
@@ -66,6 +76,7 @@ export function applyChapter99ExclusionRules(rules, rowsByCode, subjectRow = nul
   }
 
   const productDigits = String(subjectRow?.htsno || "").replace(/[.\s]/g, "");
+  const listedExclusion = VERIFIED_EXACT_EXCLUSIONS.get(productDigits);
   const entryDate = normalizeUstrEntryDate(
     context.entryDate !== undefined ? context.entryDate
       : context.referenceDate !== undefined ? context.referenceDate : new Date()
@@ -79,7 +90,7 @@ export function applyChapter99ExclusionRules(rules, rowsByCode, subjectRow = nul
       continue;
     }
     // Prefer the known listed exclusion when several exclusion headings exist.
-    const excludedBy = productDigits === LISTED_HTS && exclusionCodes.has(EXCLUSION_CODE)
+    const excludedBy = listedExclusion && exclusionCodes.has(EXCLUSION_CODE)
       && hasHeadingReference(row, EXCLUSION_CODE)
       ? EXCLUSION_CODE : [...exclusionCodes].find((candidate) => hasHeadingReference(row, candidate));
     if (!excludedBy) {
@@ -87,7 +98,7 @@ export function applyChapter99ExclusionRules(rules, rowsByCode, subjectRow = nul
       continue;
     }
 
-    const autoExempt = productDigits === LISTED_HTS && code === BASE_CODE && excludedBy === EXCLUSION_CODE
+    const autoExempt = listedExclusion && code === BASE_CODE && excludedBy === EXCLUSION_CODE
       && hasVerifiedListedExclusionRelationship(row, rowsByCode.get(EXCLUSION_CODE))
       && isChinaOrigin && entryDate >= VALID_FROM && entryDate <= VALID_TO;
     if (autoExempt) {
@@ -97,15 +108,15 @@ export function applyChapter99ExclusionRules(rules, rowsByCode, subjectRow = nul
         exclusionApplies: true,
         possibleExemptions: (rule.possibleExemptions || []).filter((item) => item.code !== EXCLUSION_CODE),
         exemptionCode: EXCLUSION_CODE,
-        exemptionMatchedHts: LISTED_HTS_DISPLAY,
+        exemptionMatchedHts: listedExclusion.displayHts,
         exemptionStatus: "已排除",
         exemptionEntryDate: entryDate,
         exemptionValidFrom: VALID_FROM,
         exemptionValidTo: VALID_TO,
         exemptionSourceUrl: OFFICIAL_SOURCES[0].url,
         exemptionSources: OFFICIAL_SOURCES.map((source) => ({ ...source })),
-        summaryZh: `${LISTED_HTS_DISPLAY} 已列入 U.S. note 20(vvv)(iii)(8) 排除清单；按中国原产、美国消费入境/提取消费日期 ${entryDate}，适用 ${EXCLUSION_CODE}，${BASE_CODE} 的 25% 已排除，不计入估算。`,
-        note: `${rule.note || "301 加征项"}；官方清单列名统计号 3923.21.0095，按归类正确、中国原产及有效日期计算。排除有效期 ${VALID_FROM} 至 ${VALID_TO}（含当日，按美国东部日期）；依据 USTR 89 FR 46948 及 2025 年延期通知。普通关税及其他适用税项仍分别计算。`
+        summaryZh: `${listedExclusion.displayHts} 已列入 ${listedExclusion.noteReference} 排除清单；按中国原产、美国消费入境/提取消费日期 ${entryDate}，适用 ${EXCLUSION_CODE}，${BASE_CODE} 的 25% 已排除，不计入估算。`,
+        note: `${rule.note || "301 加征项"}；官方清单列名统计号 ${listedExclusion.officialStatisticalNumber}，按归类正确、中国原产及有效日期计算。排除有效期 ${VALID_FROM} 至 ${VALID_TO}（含当日，按美国东部日期）；依据 USTR 89 FR 46948 及 2025 年延期通知。普通关税及其他适用税项仍分别计算。`
       });
       continue;
     }
@@ -161,17 +172,18 @@ function buildUstr301ExclusionPrompt({ baseCode, exclusionCode, exclusionRow, pr
     expiryLabel: knownPrompt?.expiryLabel || normalizeUstrEntryDate(exclusionRow?.effectiveTo) || "未规定到期日",
     status: "possible",
     autoExempt: false,
-    sourceUrl: productDigits === LISTED_HTS && exclusionCode === EXCLUSION_CODE
+    sourceUrl: VERIFIED_EXACT_EXCLUSIONS.has(productDigits) && exclusionCode === EXCLUSION_CODE
       ? OFFICIAL_SOURCES[0].url : `https://hts.usitc.gov/search?query=${encodeURIComponent(exclusionCode)}`
   };
 }
 
 function getKnownUstr301ExclusionPrompt(productDigits, exclusionCode) {
-  if (productDigits === LISTED_HTS && exclusionCode === EXCLUSION_CODE) {
+  const listedExclusion = VERIFIED_EXACT_EXCLUSIONS.get(productDigits);
+  if (listedExclusion && exclusionCode === EXCLUSION_CODE) {
     return {
       titleZh: "清单列名排除",
-      summaryZh: "统计申报号 3923.21.0095 明确列入 U.S. note 20(vvv)(iii)(8) 排除清单，符合条件时不叠加 9903.88.03 的 25%。",
-      conditionZh: `需确认商品正确归入 ${LISTED_HTS_DISPLAY}、中国原产、美国消费入境/提取消费日期在 ${VALID_FROM} 至 ${VALID_TO}（含当日），且已取得官方基础条款及排除条款`,
+      summaryZh: `统计申报号 ${listedExclusion.officialStatisticalNumber} 明确列入 ${listedExclusion.noteReference} 排除清单，符合条件时不叠加 ${BASE_CODE} 的 25%。`,
+      conditionZh: `需确认商品正确归入 ${listedExclusion.displayHts}、中国原产、美国消费入境/提取消费日期在 ${VALID_FROM} 至 ${VALID_TO}（含当日），且已取得官方基础条款及排除条款`,
       expiryLabel: VALID_TO
     };
   }
