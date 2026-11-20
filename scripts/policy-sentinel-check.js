@@ -57,6 +57,7 @@ async function main() {
   checkLaptop122Outcome(searchIndex, section122);
   checkRelatedAnnexIiElectronics(section122);
   checkPolyBag3923210095Outcome(searchIndex);
+  checkAirPurifier8421390115Outcome(searchIndex);
   checkSprayerPart8424909080Outcome(searchIndex, chapter99, section232);
   checkTextile6307909891Outcome(searchIndex);
   checkHeater8516290090Outcome(searchIndex);
@@ -377,6 +378,16 @@ function checkPolyBag3923210095Outcome(searchIndex) {
     "3923.21.00.95 keeps USTR 301 exclusion 9903.88.69 alongside base duty",
     Boolean(row && codes.has("9903.88.69") && codes.has("9903.88.03")),
     `row=${row?.htsno || "missing"}; additionalDutyCodes=${[...codes].join(",") || "none"}`
+  );
+}
+
+function checkAirPurifier8421390115Outcome(searchIndex) {
+  const row = findRowByDigits(searchIndex, "8421390115");
+  const codes = new Set(row?.additionalDutyCodes || []);
+  record(
+    "8421.39.01.15 keeps the .01 base and product-specific .69 exclusion for front-end confirmation",
+    Boolean(row && /^Free$/i.test(row.general) && codes.has("9903.88.01") && codes.has("9903.88.69") && !codes.has("9903.88.03")),
+    `row=${row?.htsno || "missing"}; general=${row?.general}; additionalDutyCodes=${[...codes].join(",")}`
   );
 }
 

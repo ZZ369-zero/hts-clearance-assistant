@@ -3370,6 +3370,7 @@ function mergeInheritedFields(row, parent) {
 // USITC China Tariffs and Chapter 99 exclusion headings list these exact
 // suffixes explicitly; avoid broad parent inheritance or missing exclusions.
 const knownAdditionalDutyCodeOverrides = new Map([
+  ["8421390115", new Set(["9903.88.01", "9903.88.69"])],
   ["3923210095", new Set(["9903.88.03", "9903.88.69"])],
   ["8424909080", new Set(["9903.88.03", "9903.88.69"])],
   ["8516290090", new Set(["9903.88.03", "9903.88.69"])],

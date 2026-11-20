@@ -3,8 +3,8 @@ import { readFile } from "node:fs/promises";
 import { applyChapter99ExclusionRules, normalizeUstrEntryDate } from "../public/ustr-301-exclusion-engine.js";
 
 const chapter99 = JSON.parse(await readFile(new URL("../public/data/chapter99.json", import.meta.url), "utf8"));
-const rowsByCode = new Map(chapter99.value.filter((row) => ["9903.88.03", "9903.88.69"].includes(row.htsno)).map((row) => [row.htsno, row]));
-assert.equal(rowsByCode.size, 2, "Deployed data must contain the base and exclusion headings");
+const rowsByCode = new Map(chapter99.value.filter((row) => ["9903.88.01", "9903.88.03", "9903.88.69"].includes(row.htsno)).map((row) => [row.htsno, row]));
+assert.equal(rowsByCode.size, 3, "Deployed data must contain both base headings and the exclusion heading");
 const subject = Object.freeze({ htsno: "3923.21.00.95", general: "3%" });
 const sprayerPart = Object.freeze({ htsno: "8424.90.90.80", general: "Free" });
 const rules = [
@@ -74,10 +74,10 @@ const sprayerResult = applySprayer();
 assertSprayerExcluded(sprayerResult, "8424.90.9080 is an exact listed USTR exclusion");
 assert.equal(sprayerPart.general, "Free", "The USTR exclusion does not change the ordinary Free rate");
 assert.equal(total(sprayerResult), 25, "The effective surcharge is 25%, not 50%");
-for (const date of ["2024-06-15", "2026-11-09", "2026-11-10T04:59:59Z"]) {
+for (const date of ["2024-06-15", "2026-11-09", "2026-11-10", "2026-11-20", "2027-01-09", "2027-01-10T04:59:59Z"]) {
   assertSprayerExcluded(applySprayer({ entryDate: date }), `8424.90.9080 valid entry date: ${date}`);
 }
-for (const date of ["2024-06-14", "2026-11-10", "2026-11-10T05:00:00Z"]) {
+for (const date of ["2024-06-14", "2027-01-10", "2027-01-10T05:00:00Z"]) {
   assertSprayerNotExcluded(applySprayer({ entryDate: date }), `8424.90.9080 outside the legal date interval: ${date}`);
 }
 for (const origin of ["US", "Vietnam", "Hong Kong", "China or Vietnam", ""]) {
@@ -88,10 +88,10 @@ for (const code of ["8424.90.90", "8424.90.90.10", "8424.90.90.20", "8424.90.90.
   assertSprayerNotExcluded(applySprayer({}, { htsno: code, general: "Free" }), `Never extend the 8424.90.9080 exclusion to a parent, neighbor, or malformed code: ${code}`);
 }
 
-for (const date of ["2024-06-15", "2026-11-08", "2026-11-09", "2026-11-10T04:59:59Z", "2026-11-10T12:59:59+08:00"]) {
+for (const date of ["2024-06-15", "2026-11-09", "2026-11-10", "2026-11-20", "2027-01-09", "2027-01-10T04:59:59Z", "2027-01-10T12:59:59+08:00"]) {
   assertExcluded(apply({ entryDate: date }), `Valid entry date: ${date}`);
 }
-for (const date of ["2024-06-14", "2024-06-15T03:59:59Z", "2026-11-10", "2026-11-10T05:00:00Z", "2026-11-10T13:00:00+08:00"]) {
+for (const date of ["2024-06-14", "2024-06-15T03:59:59Z", "2027-01-10", "2027-01-10T05:00:00Z", "2027-01-10T13:00:00+08:00"]) {
   assertNotExcluded(apply({ entryDate: date }), `Outside the legal date interval: ${date}`);
 }
 assertExcluded(apply({ entryDate: "2024-06-15T04:00:00Z" }), "Start uses Eastern daylight time");
@@ -143,6 +143,51 @@ for (const [code, patch] of [
 }
 const extraBase = apply({}, subject, rowsByCode, [...rules, { code: "9903.88.04", rate: 25, autoApply: true }]);
 assert.notEqual(extraBase.find((rule) => rule.code === "9903.88.04").exclusionApplies, true, "Only the implemented base heading may auto-exempt");
+
+const purifier = Object.freeze({ htsno: "8421.39.01.15", general: "Free" });
+const purifierRules = Object.freeze([
+  Object.freeze({ code: "9903.88.01", group: "301", autoApply: true, rate: 25 }),
+  rules[1],
+  Object.freeze({ code: "9903.05.31", group: "NEW301", autoApply: true, rate: 12.5 })
+]);
+const applyPurifier = (overrides = {}, row = purifier, data = rowsByCode, input = purifierRules) =>
+  applyChapter99ExclusionRules(input, data, row, { ...context, entryDate: "2026-11-20", ...overrides });
+const purifierBase = (result) => result.find((rule) => rule.code === "9903.88.01");
+for (const productConditions of [undefined, {}, { airPurifierUnder36kg: false }, { airPurifierUnder36kg: "true" }, { airPurifierUnder36kg: 1 }]) {
+  const pending = applyPurifier({ productConditions });
+  assert.notEqual(purifierBase(pending).exclusionApplies, true, "HTS alone and truthy non-booleans cannot confirm product facts");
+  assert.equal(total(pending), 37.5);
+  assert.match(purifierBase(pending).summaryZh, /低于 36 公斤/);
+  assert.match(purifierBase(pending).possibleExemptions[0].summaryZh, /20\(vvv\)\(i\)\(13\)/);
+  assert.equal(purifierBase(pending).ustrProductCondition.available, true);
+}
+const confirmed = { productConditions: { airPurifierUnder36kg: true } };
+const qualifiedPurifier = applyPurifier(confirmed);
+assert.equal(purifierBase(qualifiedPurifier).exclusionApplies, true);
+assert.equal(purifierBase(qualifiedPurifier).exemptionMatchedHts, purifier.htsno);
+assert.equal(purifierBase(qualifiedPurifier).exemptionValidTo, "2027-01-09");
+assert.match(purifierBase(qualifiedPurifier).summaryZh, /低于 36 公斤/);
+assert.match(purifierBase(qualifiedPurifier).summaryZh, /9903\.88\.01/);
+assert.equal(total(qualifiedPurifier), 12.5, "The independent forced-labor duty is not excluded by 9903.88.69");
+for (const entryDate of ["2026-11-09", "2026-11-10", "2027-01-09", "2027-01-10T04:59:59.999Z"]) {
+  assert.equal(total(applyPurifier({ ...confirmed, entryDate })), 12.5, `Extended valid date: ${entryDate}`);
+}
+for (const overrides of [{ originCountry: "Canada" }, { entryDate: "2027-01-10T05:00:00Z" }, { entryDate: "invalid" }, { entryDate: "2024-06-14" }]) {
+  const rejected = applyPurifier({ ...confirmed, ...overrides });
+  assert.equal(total(rejected), 37.5);
+  assert.equal(purifierBase(rejected).ustrProductCondition.available, false);
+}
+for (const htsno of ["8421.39.01", "8421.39.01.11", "8421.39.01.90", "8421.39.01.15other"]) {
+  assert.equal(total(applyPurifier(confirmed, { htsno })), 37.5, `No parent/neighbor/malformed match: ${htsno}`);
+}
+for (const missingCode of ["9903.88.01", "9903.88.69"]) {
+  const incomplete = new Map(rowsByCode);
+  incomplete.delete(missingCode);
+  assert.equal(total(applyPurifier(confirmed, purifier, incomplete)), 37.5, `Missing official evidence: ${missingCode}`);
+}
+assert.equal(total(applyPurifier(confirmed, purifier, rowsByCode, purifierRules.filter((rule) => rule.code !== "9903.88.69"))), 37.5);
+assert.notEqual(baseRule(apply(confirmed, purifier)).exclusionApplies, true, "The purifier exclusion cannot target the wrong base heading .03");
+assert.equal(purifier.general, "Free");
 assert.deepEqual(rules, originalRules, "Input rules are not mutated");
 assert.deepEqual(sprayerRules, originalSprayerRules, "Sprayer input rules are not mutated");
 assert.deepEqual([...rowsByCode], originalRows, "Official rows are not mutated");

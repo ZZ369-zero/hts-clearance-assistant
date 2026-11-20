@@ -1363,6 +1363,37 @@ tbody tr.selected td:first-child {
   font-size: 12px;
 }
 
+.ustr-product-condition {
+  grid-column: 1 / -1;
+  padding: 9px;
+  border: 1px solid #9cc6b6;
+  border-radius: 6px;
+  background: #edf7f3;
+  color: #24483c;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.ustr-product-condition label {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.ustr-product-condition input {
+  flex: 0 0 auto;
+  width: 17px;
+  height: 17px;
+  margin: 2px 0 0;
+  accent-color: #2e7d67;
+}
+
+.ustr-product-condition small {
+  display: block;
+  margin-top: 6px;
+}
+
 .restriction-exemption-summary {
   grid-column: 1 / -1;
   display: flex;

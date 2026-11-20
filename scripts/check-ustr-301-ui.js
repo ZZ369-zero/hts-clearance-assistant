@@ -17,7 +17,7 @@ assert.match(appSource, /^init\(\);\r?$/m, "page bootstrap must be recognized");
 appSource = appSource.replace(/^init\(\);\r?$/m, "");
 appSource += `\n;globalThis.page = { state, els, api, loadPolicyRules, loadForcedLaborExemptions,
   loadUstrExclusionRows, loadAdditionalDuties, renderAdditionalCodes, renderDetail, applyRate,
-  calculate, staticRuntime };`;
+  calculate, staticRuntime, handleUstrProductConditionChange };`;
 
 function element() {
   const classes = new Set();
@@ -35,7 +35,7 @@ function element() {
   };
 }
 
-async function openPage({ date = "2026-09-26T12:00:00.000Z", origin = "China", missingHeading = false } = {}) {
+async function openPage({ date = "2026-11-20T12:00:00.000Z", origin = "China", missingHeading = false } = {}) {
   const nodes = new Map();
   const location = new URL("https://example.github.io/hts-clearance-assistant/?static=1");
   const fixture = { missingHeading };
@@ -102,7 +102,7 @@ function assertExcluded(page, row) {
   assert.match(page.els.additionalDutyList.innerHTML, /not-applied excluded/);
   assert.match(page.els.restrictionList.innerHTML, /not-applied excluded/);
   assert.match(page.els.additionalDutyList.innerHTML, /25%/);
-  assert.match(page.els.additionalDutyList.innerHTML, /2026-11-09/);
+  assert.match(page.els.additionalDutyList.innerHTML, /2027-01-09/);
   assert.match(page.renderAdditionalCodes(row), /25% 已排除 · 不计入/);
   assert.doesNotMatch(page.els.additionalDutySplit.innerHTML, /9903\.88\.03|99038803/);
   assert.doesNotMatch(page.els.taxBreakdown.innerHTML, /37\.5%/);
@@ -123,7 +123,7 @@ function assertSprayerExcluded(page, row) {
   assert.match(page.els.surchargeBreakdown.textContent, /9903\.88\.03.*9903\.88\.69.*不计入/);
   assert.match(page.els.additionalDutyList.innerHTML, /not-applied excluded/);
   assert.match(page.els.additionalDutyList.innerHTML, /9903\.82\.09/);
-  assert.match(page.els.additionalDutyList.innerHTML, /2026-11-09/);
+  assert.match(page.els.additionalDutyList.innerHTML, /2027-01-09/);
   assert.match(page.renderAdditionalCodes(row), /301 9903\.88\.03 25% 已排除 · 不计入/);
   assert.match(page.els.additionalDutySplit.innerHTML, /9903(?:\.82\.09|8209)/);
   assert.doesNotMatch(page.els.additionalDutySplit.innerHTML, /9903\.88\.03|99038803/);
@@ -161,11 +161,11 @@ assert.doesNotMatch(current.page.renderAdditionalCodes(conditionalRow), /已排�
 assert.match(current.page.els.additionalDutyList.innerHTML, /条件豁免|待核|需复核|有豁免/);
 assertExcluded(current.page, await selectHts(current.page, "3923210095"));
 
-const finalDay = await openPage({ date: "2026-11-10T04:59:59.999Z" });
+const finalDay = await openPage({ date: "2027-01-10T04:59:59.999Z" });
 assertExcluded(finalDay.page, await selectHts(finalDay.page, "3923210095"));
 assertSprayerExcluded(finalDay.page, await selectHts(finalDay.page, "8424909080"));
 for (const options of [
-  { date: "2026-11-10T05:00:00.000Z" },
+  { date: "2027-01-10T05:00:00.000Z" },
   { origin: "Canada" },
   { missingHeading: true }
 ]) {
@@ -177,7 +177,7 @@ for (const options of [
 }
 
 for (const options of [
-  { date: "2026-11-10T05:00:00.000Z" },
+  { date: "2027-01-10T05:00:00.000Z" },
   { origin: "Canada" },
   { missingHeading: true }
 ]) {
@@ -196,4 +196,66 @@ assert.ok(refresh.fetches.some((request) => request.file === "chapter99.json" &&
 assertExcluded(refresh.page, await selectHts(refresh.page, "3923210095"));
 assertSprayerExcluded(refresh.page, await selectHts(refresh.page, "8424909080"));
 
-console.log("USTR 301 UI checks passed: real static API, search badges, duty cards, calculator, expiry, origin, conditional products, and refresh.");
+async function confirmPurifier(page, checked) {
+  const input = { checked, disabled: false, dataset: { ustrProductCondition: "airPurifierUnder36kg" } };
+  await page.handleUstrProductConditionChange({ target: { closest: () => input } });
+}
+
+function assertPurifier(page, row, excluded) {
+  assert.equal(page.els.generalRate.value, "0");
+  assert.equal(page.els.miniGeneralRate.textContent, "Free");
+  assert.equal(page.els.surchargeRate.textContent, excluded ? "12.5%" : "37.5%");
+  assert.equal(page.els.additionalRate.value, excluded ? "12.5" : "37.5");
+  assert.equal(page.els.totalDuty.textContent, excluded ? "$1,250.00" : "$3,750.00");
+  assert.equal(page.state.additionalDutyBreakdown.some((item) => item.code === "9903.88.01"), !excluded);
+  assert.ok(page.state.additionalDutyBreakdown.some((item) => item.code === "9903.05.31" && item.rate === 12.5));
+  assert.match(page.els.restrictionList.innerHTML, /电动空气净化设备/);
+  assert.match(page.els.restrictionList.innerHTML, /低于 36 公斤（不含 36 公斤）/);
+  assert.match(page.els.restrictionList.innerHTML, /data-ustr-product-condition="airPurifierUnder36kg"/);
+  assert.match(page.els.restrictionList.innerHTML, /商品内部含芯片，不等于符合半导体排除/);
+  assert.match(page.els.additionalDutyList.innerHTML, /2027-01-09/);
+  if (excluded) {
+    assert.match(page.els.restrictionList.innerHTML, /25% 不计入/);
+    assert.match(page.renderAdditionalCodes(row), /301 9903\.88\.01 25% 已排除 · 不计入/);
+    assert.doesNotMatch(page.els.additionalDutySplit.innerHTML, /9903\.88\.01|99038801/);
+  } else {
+    assert.match(page.renderAdditionalCodes(row), /9903\.88\.01 \+25%（条件豁免待确认）/);
+    assert.doesNotMatch(page.renderAdditionalCodes(row), /已排除/);
+  }
+}
+
+const purifierPage = await openPage();
+const purifierRow = await selectHts(purifierPage.page, "8421390115");
+assertPurifier(purifierPage.page, purifierRow, false);
+assert.match(purifierPage.page.els.surchargeBreakdown.textContent, /条件待确认/);
+await confirmPurifier(purifierPage.page, true);
+assertPurifier(purifierPage.page, purifierRow, true);
+assert.match(purifierPage.page.els.restrictionList.innerHTML, /airPurifierUnder36kg" checked/);
+await confirmPurifier(purifierPage.page, false);
+assertPurifier(purifierPage.page, purifierRow, false);
+await confirmPurifier(purifierPage.page, true);
+const neighboringPurifier = await selectHts(purifierPage.page, "8421390190");
+assert.doesNotMatch(purifierPage.page.renderAdditionalCodes(neighboringPurifier), /已排除/);
+assert.doesNotMatch(purifierPage.page.els.restrictionList.innerHTML, /data-ustr-product-condition/);
+assertPurifier(purifierPage.page, await selectHts(purifierPage.page, "8421390115"), true);
+for (const date of ["2026-11-09T12:00:00Z", "2026-11-10T12:00:00Z", "2027-01-10T04:59:59.999Z"]) {
+  const { page } = await openPage({ date });
+  const row = await selectHts(page, "8421390115");
+  await confirmPurifier(page, true);
+  assertPurifier(page, row, true);
+}
+for (const options of [{ date: "2027-01-10T05:00:00Z" }, { origin: "Canada" }, { missingHeading: true }]) {
+  const { page } = await openPage(options);
+  const row = await selectHts(page, "8421390115");
+  await confirmPurifier(page, true);
+  assert.equal(page.els.surchargeRate.textContent, options.origin ? "25%" : "37.5%", "Confirmation cannot bypass legal dates, origin or official evidence; China-only 12.5% is not added for Canada");
+  assert.doesNotMatch(page.renderAdditionalCodes(row), /已排除/);
+}
+const missingPurifier = await openPage({ missingHeading: true });
+await selectHts(missingPurifier.page, "8421390115");
+await confirmPurifier(missingPurifier.page, true);
+missingPurifier.fixture.missingHeading = false;
+await missingPurifier.page.loadUstrExclusionRows(true);
+assertPurifier(missingPurifier.page, await selectHts(missingPurifier.page, "8421390115"), true);
+
+console.log("USTR 301 UI checks passed: product confirmation, undo, exact scope, independent 12.5%/232 duties, extension, calculator, and refresh.");
